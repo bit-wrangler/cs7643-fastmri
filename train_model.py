@@ -26,8 +26,8 @@ CONFIG = {
     # Model hyperparameters
     'encoder_num_heads': 1,
     'decoder_num_heads': 1,
-    'pre_dims': 16,
-    'pre_layers': 1,
+    'pre_dims': 320,
+    'pre_layers': 2,
     'hidden_size': 128,
     'activation': 'relu',
     'H': 320,
@@ -38,8 +38,8 @@ CONFIG = {
     'num_epochs': 10,
     'learning_rate': 1e-4,
     'weight_decay': 1e-5,
-    'kspace_loss_weight': 0.5,
-    'image_loss_weight': 0.5,
+    'kspace_loss_weight': 1000.,
+    'image_loss_weight': 1.,
 
     # Paths
     'train_path': os.environ.get('SINGLECOIL_TRAIN_PATH'),
@@ -98,16 +98,29 @@ class FastMRIDataset(Dataset):
             }
 
 # Loss functions
-def kspace_loss(pred, target):
+def kspace_loss(pred, target, mask=None):
     """
-    Calculate MSE loss in k-space domain
+    Calculate MSE loss in k-space domain.
+    If mask is provided, calculate loss only for columns where mask is 0 (masked out columns).
     """
-
     target_max = torch.max(target)
     pred = pred / target_max
     target = target / target_max
 
-    return nn.MSELoss()(pred, target)
+    if mask is not None:
+        # Extract only the columns where mask is 0 (masked out columns)
+        # mask shape is (1, 1, W, 1)
+        inverted_mask = ~mask.squeeze()  # Shape: (W,)
+
+        # Extract only the masked columns from pred and target
+        # pred and target shape: (n_slices, 2, H, W)
+        pred_masked = pred[:, :, :, inverted_mask]
+        target_masked = target[:, :, :, inverted_mask]
+
+        return nn.MSELoss()(pred_masked, target_masked)
+    else:
+        # If no mask is provided, calculate loss on all columns
+        return nn.MSELoss()(pred, target)
 
 def image_domain_loss(pred, target):
     """
@@ -131,11 +144,12 @@ def image_domain_loss(pred, target):
 
     return nn.MSELoss()(pred_image_abs, target_image_abs)
 
-def combined_loss(pred, target, kspace_weight=0.5, image_weight=0.5):
+def combined_loss(pred, target, mask=None, kspace_weight=0.5, image_weight=0.5):
     """
     Combined loss from k-space and image domain
+    If mask is provided, k-space loss is calculated only for columns where mask is 0.
     """
-    k_loss = kspace_loss(pred, target)
+    k_loss = kspace_loss(pred, target, mask)
     img_loss = image_domain_loss(pred, target)
 
     return kspace_weight * k_loss + image_weight * img_loss, k_loss, img_loss
@@ -203,6 +217,7 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
         loss, k_loss, img_loss = combined_loss(
             outputs,
             kspace,
+            mask,
             kspace_weight=CONFIG['kspace_loss_weight'],
             image_weight=CONFIG['image_loss_weight']
         )
@@ -272,6 +287,7 @@ def validate(model, dataloader, device):
             loss, k_loss, img_loss = combined_loss(
                 outputs,
                 kspace,
+                mask,
                 kspace_weight=CONFIG['kspace_loss_weight'],
                 image_weight=CONFIG['image_loss_weight']
             )
@@ -306,25 +322,6 @@ def validate(model, dataloader, device):
     avg_ssim = running_ssim / total_slices
 
     return avg_loss, avg_kspace_loss, avg_image_loss, avg_ssim.item()
-
-# Function to test if the model can handle a sample input
-def test_model_with_sample(model, device):
-    print("Testing model with sample input...")
-    try:
-        # Create a sample input with the expected dimensions
-        sample_kspace = torch.randn(1, 2, CONFIG['H'], CONFIG['W']).to(device)  # 1 slice
-        sample_mask = torch.ones(1, 1, CONFIG['W'], 1, dtype=torch.bool).to(device)
-
-        # Try a forward pass
-        with torch.no_grad():
-            output = model(sample_kspace, sample_mask)
-
-        print(f"Model successfully processed sample input with shape {sample_kspace.shape}")
-        print(f"Output shape: {output.shape}")
-        return True
-    except Exception as e:
-        print(f"Error testing model with sample input: {e}")
-        return False
 
 # Main training function
 def train_model():
@@ -371,13 +368,6 @@ def train_model():
     ).to(device)
 
     print(f"Model initialized with parameters: H={CONFIG['H']}, W={CONFIG['W']}")
-
-    # Test if the model can handle a sample input
-    if not test_model_with_sample(model, device):
-        raise RuntimeError("Model failed to process sample input with default parameters")
-
-
-    print(f"Note: The model will handle different input sizes by processing in chunks.")
 
     # Initialize optimizer
     optimizer = optim.Adam(

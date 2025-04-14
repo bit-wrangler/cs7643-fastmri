@@ -163,22 +163,28 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         encoder_output = self.encoder(pre_conv, pre_conv, pre_conv)[0]
 
         # decoder input n_slices(batch_size), M (seq_len), hidden_size (embed_dim)
-        decoder_input = torch.zeros(n_slices, W, self.hidden_size).to(kspace.device) # (n_slices, W, hidden_size)
-        decoder_input[:, mask.squeeze()] = encoder_output
+        # decoder_input = torch.zeros(n_slices, W-M, self.hidden_size).to(kspace.device) # (n_slices, W-M, hidden_size)
         # self.masked_token is (hidden_size)
-        masked_tokens = self.masked_token.unsqueeze(0).unsqueeze(0).repeat(n_slices, W - M, 1) # (n_slices, W - M, hidden_size)
-        decoder_input[:, ~mask.squeeze()] = masked_tokens
+        # masked_tokens = self.masked_token.unsqueeze(0).unsqueeze(0).repeat(n_slices, W - M, 1) # (n_slices, W - M, hidden_size)
+        # decoder_input[:, ~mask.squeeze()] = masked_tokens
+        decoder_input = self.masked_token.unsqueeze(0).unsqueeze(0).repeat(n_slices, W-M, 1) # (n_slices, W-M, hidden_size)
 
-        decoder_input_position_embedding = self.decoder_input_position_embedding(position) # (1, 1, W, hidden_size)
-        decoder_input_position_embedding = decoder_input_position_embedding.repeat(n_slices, 1, 1, 1) # (n_slices, 1, W, hidden_size)
-        decoder_input_position_embedding = decoder_input_position_embedding.squeeze(1)#.permute(0, 2, 1) # (n_slices, W, hidden_size)
+        position_masked = position[:, :, ~mask.squeeze()] # (1, 1, W-M)
+
+        decoder_input_position_embedding = self.decoder_input_position_embedding(position_masked) # (1, 1, W-M, hidden_size)
+        decoder_input_position_embedding = decoder_input_position_embedding.repeat(n_slices, 1, 1, 1) # (n_slices, 1, W-M, hidden_size)
+        decoder_input_position_embedding = decoder_input_position_embedding.squeeze(1)#.permute(0, 2, 1) # (n_slices, W-M, hidden_size)
         decoder_input = decoder_input + decoder_input_position_embedding
 
-        decoder_output = self.decoder(decoder_input, decoder_input, decoder_input)[0] # (n_slices, W, hidden_size) -> (n_slices, W, hidden_size)
+        decoder_output = self.decoder(decoder_input, decoder_input, decoder_input)[0] # (n_slices, W-M, hidden_size) -> (n_slices, W, hidden_size)
 
-        decoder_output = decoder_output.permute(0, 2, 1) # (n_slices, hidden_size, W)
+        decoder_output = decoder_output.permute(0, 2, 1) # (n_slices, hidden_size, W-M)
 
-        output = self.post_conv(decoder_output) # (n_slices, hidden_size, W) -> (n_slices, 2*H, W)
-        output = output.reshape(n_slices, 2, H, W) # (n_slices, 2*H, W) -> (n_slices, 2, H, W)
+        output_masked = self.post_conv(decoder_output) # (n_slices, hidden_size, W-M) -> (n_slices, 2*H, W-M)
+        output_masked = output_masked.reshape(n_slices, 2, H, W-M) # (n_slices, 2*H, W-M) -> (n_slices, 2, H, W-M)
+
+        output = torch.zeros(n_slices, 2, H, W).to(kspace.device) # (n_slices, 2, H, W)
+        output[:, :, :, ~mask.squeeze()] = output_masked
+        output[:, :, :, mask.squeeze()] = kspace[:, :, :, mask.squeeze()]
 
         return output
