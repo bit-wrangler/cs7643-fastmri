@@ -1,0 +1,18 @@
+name: cs7643-fastmri
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - matplotlib
+  - tqdm
+  - jupyter
+  - pyyaml
+  - pip
+  - pip:
+    - torch==2.6.0
+    - torchvision
+    - notebook
+    - numpy
+    - python-dotenv
+    - fastmri
