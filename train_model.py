@@ -4,6 +4,7 @@ import os
 import glob
 import fastmri
 import fastmri.data.transforms as T
+from fastmri.evaluate import ssim
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -34,7 +35,7 @@ CONFIG = {
 
     # Training hyperparameters
     'batch_size': 1,  # Reduced batch size to avoid CUDA errors
-    'num_epochs': 50,
+    'num_epochs': 10,
     'learning_rate': 1e-4,
     'weight_decay': 1e-5,
     'kspace_loss_weight': 0.5,
@@ -101,6 +102,11 @@ def kspace_loss(pred, target):
     """
     Calculate MSE loss in k-space domain
     """
+
+    target_max = torch.max(target)
+    pred = pred / target_max
+    target = target / target_max
+
     return nn.MSELoss()(pred, target)
 
 def image_domain_loss(pred, target):
@@ -118,6 +124,10 @@ def image_domain_loss(pred, target):
     # Calculate absolute values
     pred_image_abs = fastmri.complex_abs(pred_image)
     target_image_abs = fastmri.complex_abs(target_image)
+
+    target_max = torch.max(target_image_abs)
+    pred_image_abs = pred_image_abs / target_max
+    target_image_abs = target_image_abs / target_max
 
     return nn.MSELoss()(pred_image_abs, target_image_abs)
 
@@ -167,8 +177,7 @@ def train_epoch(model, dataloader, optimizer, device, epoch):
         kspace = centered_crop(kspace, CONFIG['W'], CONFIG['H'])
         mask = centered_crop_1d(mask, CONFIG['W'])
 
-        # Process in smaller chunks if needed
-        batch_size = CONFIG['batch_size']
+        # Get number of slices
         n_slices = kspace.shape[0]
         total_slices += n_slices
 
@@ -237,6 +246,7 @@ def validate(model, dataloader, device):
     running_loss = 0.0
     running_kspace_loss = 0.0
     running_image_loss = 0.0
+    running_ssim = 0.0
     total_slices = 0
 
     with torch.no_grad():
@@ -255,31 +265,36 @@ def validate(model, dataloader, device):
             n_slices = kspace.shape[0]
             total_slices += n_slices
 
-            # Process the volume in chunks of batch_size slices
-            # for i in range(0, n_slices, batch_size):
-                # try:
-                    # Get a chunk of slices
-                    # end_idx = min(i + batch_size, n_slices)
-                    # kspace_chunk = kspace[i:end_idx]
-
-                    # print(f"Validation - Processing chunk {i}:{end_idx} with shape {kspace_chunk.shape}")
-
-                    # Forward pass
+            # Forward pass
             outputs = model(kspace, mask)
 
-                    # Calculate loss
+            # Calculate loss
             loss, k_loss, img_loss = combined_loss(
                 outputs,
                 kspace,
                 kspace_weight=CONFIG['kspace_loss_weight'],
                 image_weight=CONFIG['image_loss_weight']
             )
-                # except RuntimeError as e:
-                #     print(f"Error in validation for chunk {i}:{end_idx}: {e}")
-                #     print(f"Skipping this chunk and continuing...")
-                #     continue
 
-                # Update running losses
+            # Calculate SSIM
+            # Convert to image domain for SSIM calculation
+            pred_permuted = outputs.permute(0, 2, 3, 1)
+            target_permuted = kspace.permute(0, 2, 3, 1)
+
+            # Convert to image domain
+            pred_image = fastmri.ifft2c(pred_permuted)
+            target_image = fastmri.ifft2c(target_permuted)
+
+            # Calculate absolute values
+            pred_image_abs = fastmri.complex_abs(pred_image).cpu().numpy()
+            target_image_abs = fastmri.complex_abs(target_image).cpu().numpy()
+
+            # Calculate SSIM for all slices at once
+            # The ssim function expects 3D arrays and returns the average SSIM
+            slice_ssim = ssim(target_image_abs, pred_image_abs)
+            running_ssim += slice_ssim * n_slices  # Multiply by n_slices since we're averaging later
+
+            # Update running losses
             running_loss += loss.item() * n_slices
             running_kspace_loss += k_loss.item() * n_slices
             running_image_loss += img_loss.item() * n_slices
@@ -288,8 +303,9 @@ def validate(model, dataloader, device):
     avg_loss = running_loss / total_slices
     avg_kspace_loss = running_kspace_loss / total_slices
     avg_image_loss = running_image_loss / total_slices
+    avg_ssim = running_ssim / total_slices
 
-    return avg_loss, avg_kspace_loss, avg_image_loss
+    return avg_loss, avg_kspace_loss, avg_image_loss, avg_ssim.item()
 
 # Function to test if the model can handle a sample input
 def test_model_with_sample(model, device):
@@ -360,7 +376,7 @@ def train_model():
     if not test_model_with_sample(model, device):
         raise RuntimeError("Model failed to process sample input with default parameters")
 
-    
+
     print(f"Note: The model will handle different input sizes by processing in chunks.")
 
     # Initialize optimizer
@@ -389,7 +405,7 @@ def train_model():
         )
 
         # Validate
-        val_loss, val_kspace_loss, val_image_loss = validate(model, val_loader, device)
+        val_loss, val_kspace_loss, val_image_loss, val_ssim = validate(model, val_loader, device)
 
         # Update learning rate
         scheduler.step(val_loss)
@@ -397,7 +413,7 @@ def train_model():
         # Print metrics
         print(f"Epoch {epoch+1}/{CONFIG['num_epochs']} - "
             f"Train Loss: {train_loss:.6f} (K: {train_kspace_loss:.6f}, Img: {train_image_loss:.6f}) - "
-            f"Val Loss: {val_loss:.6f} (K: {val_kspace_loss:.6f}, Img: {val_image_loss:.6f})")
+            f"Val Loss: {val_loss:.6f} (K: {val_kspace_loss:.6f}, Img: {val_image_loss:.6f}, SSIM: {val_ssim:.6f})")
 
         # Save checkpoint if validation loss improved
         if val_loss < best_val_loss:
@@ -408,9 +424,10 @@ def train_model():
                 'optimizer_state_dict': optimizer.state_dict(),
                 'train_loss': train_loss,
                 'val_loss': val_loss,
+                'val_ssim': val_ssim,
                 'config': CONFIG
             }, os.path.join(CONFIG['checkpoint_dir'], 'best_model.pt'))
-            print(f"Saved best model checkpoint with validation loss: {val_loss:.6f}")
+            print(f"Saved best model checkpoint with validation loss: {val_loss:.6f}, SSIM: {val_ssim:.6f}")
 
         # Save checkpoint every N epochs
         if (epoch + 1) % CONFIG['save_checkpoint_every'] == 0:
@@ -420,6 +437,7 @@ def train_model():
                 'optimizer_state_dict': optimizer.state_dict(),
                 'train_loss': train_loss,
                 'val_loss': val_loss,
+                'val_ssim': val_ssim,
                 'config': CONFIG
             }, os.path.join(CONFIG['checkpoint_dir'], f'model_epoch_{epoch+1}.pt'))
             print(f"Saved checkpoint at epoch {epoch+1}")
