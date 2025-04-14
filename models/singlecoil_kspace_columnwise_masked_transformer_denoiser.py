@@ -64,8 +64,8 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
             pre_layers: int = 1,
             hidden_size: int = 128,
             activation: str = 'relu',
-            H: int = 640,
-            W: int = 372,
+            H: int = 320,
+            W: int = 320,
     ):
         super().__init__()
         self.encoder_num_heads = encoder_num_heads
