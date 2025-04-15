@@ -16,3 +16,4 @@ dependencies:
     - numpy
     - python-dotenv
     - fastmri
+    - wandb

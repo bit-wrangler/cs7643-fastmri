@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from fastmri.data.subsample import RandomMaskFunc
 from ssim_loss import ssim_loss
+import wandb
 
 
 class FastMRIDataset(Dataset):
@@ -167,6 +168,20 @@ class KspaceTrainer:
         # Move model to device
         self.model = self.model.to(self.device)
 
+        # Initialize wandb
+        project_name = os.environ.get('WANDB_PROJECT_NAME', 'cs7643-fastmri')
+        wandb.init(project=project_name, config=config)
+
+        # Log model information
+        wandb.run.name = f"{type(model).__name__}_{wandb.run.id}"
+        wandb.run.save()
+
+        # Log model architecture
+        wandb.config.update({
+            "model_name": type(model).__name__,
+            "model_structure": str(model)
+        })
+
         # Create mask function
         self.mask_func = RandomMaskFunc(
             center_fractions=self.config.get('center_fractions', [0.04]),
@@ -297,17 +312,26 @@ class KspaceTrainer:
             running_ssim_loss += ssim_loss_val.item()  # Track SSIM loss
 
             # Update progress bar
-            pbar.set_postfix({
+            current_metrics = {
                 'loss': running_loss / (batch_idx + 1),
                 'mse_loss': running_image_loss / (batch_idx + 1),
                 'ssim_loss': running_ssim_loss / (batch_idx + 1),
                 'slices': total_slices
-            })
+            }
+            pbar.set_postfix(current_metrics)
 
         # Calculate average losses
         avg_loss = running_loss / len(dataloader) if len(dataloader) > 0 else 0
         avg_mse_loss = running_image_loss / len(dataloader) if len(dataloader) > 0 else 0
         avg_ssim_loss = running_ssim_loss / len(dataloader) if len(dataloader) > 0 else 0
+
+        # Log epoch training metrics to wandb
+        wandb.log({
+            "train_loss": avg_loss,
+            "train_mse_loss": avg_mse_loss,
+            "train_ssim_loss": avg_ssim_loss,
+            "epoch": epoch + 1
+        }, commit=False)
 
         return avg_loss, avg_mse_loss, avg_ssim_loss
 
@@ -369,6 +393,14 @@ class KspaceTrainer:
         avg_ssim_loss = running_ssim_loss / total_slices if total_slices > 0 else 0
         avg_ssim = running_ssim / total_slices if total_slices > 0 else 0
 
+        # Log validation metrics to wandb
+        wandb.log({
+            "val_loss": avg_loss,
+            "val_mse_loss": avg_mse_loss,
+            "val_ssim_loss": avg_ssim_loss,
+            "val_ssim": avg_ssim.item()
+        }, commit=False)
+
         return avg_loss, avg_mse_loss, avg_ssim_loss, avg_ssim.item()
 
     def train(self):
@@ -395,6 +427,9 @@ class KspaceTrainer:
                   f"Train Loss: {train_loss:.6f} (MSE: {train_mse_loss:.6f}, SSIM: {train_ssim_loss:.6f}) - "
                   f"Val Loss: {val_loss:.6f} (MSE: {val_mse_loss:.6f}, SSIM: {val_ssim_loss:.6f}, SSIM-Metric: {val_ssim:.6f})")
 
+            # Log learning rate to wandb
+            wandb.log({"learning_rate": current_lr})
+
             # Save checkpoint if validation loss improved
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -409,7 +444,10 @@ class KspaceTrainer:
     def _save_checkpoint(self, filename, epoch, train_loss, val_loss, val_ssim):
         """Save a checkpoint."""
         checkpoint_dir = self.config.get('checkpoint_dir', 'checkpoints')
-        torch.save({
+        checkpoint_path = os.path.join(checkpoint_dir, filename)
+
+        # Save the checkpoint locally
+        checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -417,4 +455,20 @@ class KspaceTrainer:
             'val_loss': val_loss,
             'val_ssim': val_ssim,
             'config': self.config
-        }, os.path.join(checkpoint_dir, filename))
+        }
+        torch.save(checkpoint, checkpoint_path)
+
+        # Log best model metrics
+        if 'best' in filename:
+            wandb.run.summary.update({
+                "best_epoch": epoch + 1,
+                "best_val_loss": val_loss,
+                "best_val_ssim": val_ssim
+            })
+
+    def __del__(self):
+        """Cleanup when the trainer is deleted."""
+        try:
+            wandb.finish()
+        except:
+            pass
