@@ -27,11 +27,12 @@ CONFIG = {
 
     # Training hyperparameters
     'batch_size': 1,  # Reduced batch size to avoid CUDA errors
-    'num_epochs': 50,
+    'num_epochs': 150,
     'learning_rate': 1e-4,
     'weight_decay': 1e-5,
     'mse_weight': 1.0,
     'ssim_weight': 1000.0,
+    'min_learning_rate': 1e-6,
 
     # Paths
     'train_path': os.environ.get('SINGLECOIL_TRAIN_PATH'),

@@ -208,6 +208,8 @@ class KspaceTrainer:
             verbose=True
         )
 
+        self.min_learning_rate = self.config.get('min_learning_rate', 1e-6)
+
     def _get_dataloaders(self):
         """Create and return train and validation dataloaders."""
         # Create datasets with target size for cropping
@@ -440,6 +442,10 @@ class KspaceTrainer:
             if (epoch + 1) % self.config.get('save_checkpoint_every', 5) == 0:
                 self._save_checkpoint(f'model_epoch_{epoch+1}.pt', epoch, train_loss, val_loss, val_ssim)
                 print(f"Saved checkpoint at epoch {epoch+1}")
+
+            if current_lr <= self.min_learning_rate:
+                print(f"Reached minimum learning rate of {self.min_learning_rate}, stopping training.")
+                break
 
     def _save_checkpoint(self, filename, epoch, train_loss, val_loss, val_ssim):
         """Save a checkpoint."""

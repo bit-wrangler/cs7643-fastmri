@@ -32,6 +32,7 @@ CONFIG = {
     'weight_decay': 1e-5,
     'mse_weight': 1.0,
     'ssim_weight': 1000.0,
+    'min_learning_rate': 1e-6,
 
     # Paths
     'train_path': os.environ.get('SINGLECOIL_TRAIN_PATH'),
