@@ -380,6 +380,7 @@ class KspaceTrainer:
         best_val_loss = float('inf')
 
         for epoch in range(self.config['num_epochs']):
+            current_lr = self.optimizer.param_groups[0]['lr']
             # Train for one epoch
             train_loss, train_mse_loss, train_ssim_loss = self.train_epoch(train_loader, epoch)
 
@@ -389,8 +390,8 @@ class KspaceTrainer:
             # Update learning rate
             self.scheduler.step(val_loss)
 
-            # Print metrics
-            print(f"Epoch {epoch+1}/{self.config['num_epochs']} - "
+            # Print metrics with current learning rate
+            print(f"Epoch {epoch+1}/{self.config['num_epochs']} - LR: {current_lr:.2e} - "
                   f"Train Loss: {train_loss:.6f} (MSE: {train_mse_loss:.6f}, SSIM: {train_ssim_loss:.6f}) - "
                   f"Val Loss: {val_loss:.6f} (MSE: {val_mse_loss:.6f}, SSIM: {val_ssim_loss:.6f}, SSIM-Metric: {val_ssim:.6f})")
 
