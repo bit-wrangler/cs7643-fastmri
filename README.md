@@ -62,19 +62,28 @@ Follow these instructions to set up your development environment and get the pro
 This assumes that a filesystem (or other directory) is available at `~/fastmri` on remote system
 
 ```
-rsync -avz --exclude=checkpoints --exclude=wandb --exclude='__pycache__' ~/projects/cs7643-fastmri/ ubuntu@<remote-ip>:~/fastmri/code
+rsync -avz --exclude='.git/' --exclude='checkpoints/' --exclude='wandb/' --exclude='__pycache__/' ~/projects/cs7643-fastmri/ ubuntu@<remote-ip>:~/fastmri/code
 ```
 
 #### copy data to local SSD
 
 ```
-cp -r ~/fastmri/data ~/data_local
+sudo apt install pv
+sudo apt install pixz
+mkdir ~/data
+rsync -ah --progress ~/fastmri/data/knee_singlecoil_train.tar.xz ~/fastmri/data/knee_singlecoil_val.tar.xz ~/data/
+for f in ~/data/knee_singlecoil_train.tar.xz ~/data/knee_singlecoil_val.tar.xz; do pv "$f" | pixz -d | tar -x -C ~/data ; done
+pixz -d < ~/data/knee_singlecoil_train.tar.xz | tar -x -C ~/data
+pixz -d < ~/data/knee_singlecoil_val.tar.xz | tar -x -C ~/data
 ```
 
 #### create environment on remote system
 
 ```
-conda env create --prefix ~/fastmri/env --file environment.yml
+curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh
+conda init
+conda env create --prefix ~/fastmri/env --file ~/fastmri/code/environment.yml
 conda activate ~/fastmri/env
 ```
 
