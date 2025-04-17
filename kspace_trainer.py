@@ -3,7 +3,7 @@ import os
 import glob
 import fastmri
 import fastmri.data.transforms as T
-from fastmri.evaluate import ssim
+from fastmri.evaluate import ssim, psnr
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -168,16 +168,21 @@ class KspaceTrainer:
         # Move model to device
         self.model = self.model.to(self.device)
 
+        tags = None
+
+        if 'tags' in config:
+            tags = config['tags']
+
         # Initialize wandb
         project_name = os.environ.get('WANDB_PROJECT_NAME', 'cs7643-fastmri')
-        wandb.init(project=project_name, config=config)
+        self.run = wandb.init(project=project_name, config=config, tags=tags)
 
         # Log model information
-        wandb.run.name = f"{type(model).__name__}_{wandb.run.id}"
-        wandb.run.save()
+        self.run.name = f"{type(model).__name__}_{self.run.id}"
+        self.run.save()
 
         # Log model architecture
-        wandb.config.update({
+        self.run.config.update({
             "model_name": type(model).__name__,
             "model_structure": str(model)
         })
@@ -328,7 +333,7 @@ class KspaceTrainer:
         avg_ssim_loss = running_ssim_loss / len(dataloader) if len(dataloader) > 0 else 0
 
         # Log epoch training metrics to wandb
-        wandb.log({
+        self.run.log({
             "train_loss": avg_loss,
             "train_mse_loss": avg_mse_loss,
             "train_ssim_loss": avg_ssim_loss,
@@ -344,6 +349,7 @@ class KspaceTrainer:
         running_mse_loss = 0.0
         running_ssim_loss = 0.0
         running_ssim = 0.0
+        running_psnr = 0.0
         total_slices = 0
 
         with torch.no_grad():
@@ -384,6 +390,12 @@ class KspaceTrainer:
                 slice_ssim = ssim(target_image_abs, pred_image_abs)
                 running_ssim += slice_ssim * n_slices  # Multiply by n_slices since we're averaging later
 
+                # Calculate PSNR for all slices at once
+                for i in range(n_slices):
+                    slice_psnr = psnr(target_image_abs[i], pred_image_abs[i])
+                    running_psnr += slice_psnr
+
+
                 # Update running losses
                 running_loss += loss.item() * n_slices
                 running_mse_loss += mse_loss.item() * n_slices
@@ -394,16 +406,18 @@ class KspaceTrainer:
         avg_mse_loss = running_mse_loss / total_slices if total_slices > 0 else 0
         avg_ssim_loss = running_ssim_loss / total_slices if total_slices > 0 else 0
         avg_ssim = running_ssim / total_slices if total_slices > 0 else 0
+        avg_psnr = running_psnr / total_slices if total_slices > 0 else 0
 
         # Log validation metrics to wandb
-        wandb.log({
+        self.run.log({
             "val_loss": avg_loss,
             "val_mse_loss": avg_mse_loss,
             "val_ssim_loss": avg_ssim_loss,
-            "val_ssim": avg_ssim.item()
+            "val_ssim": avg_ssim.item(),
+            "val_psnr": avg_psnr.item()
         }, commit=False)
 
-        return avg_loss, avg_mse_loss, avg_ssim_loss, avg_ssim.item()
+        return avg_loss, avg_mse_loss, avg_ssim_loss, avg_ssim.item(), avg_psnr.item()
 
     def train(self):
         """Main training loop."""
@@ -419,35 +433,38 @@ class KspaceTrainer:
             train_loss, train_mse_loss, train_ssim_loss = self.train_epoch(train_loader, epoch)
 
             # Validate
-            val_loss, val_mse_loss, val_ssim_loss, val_ssim = self.validate(val_loader)
+            val_loss, val_mse_loss, val_ssim_loss, val_ssim, val_psnr = self.validate(val_loader)
 
             # Update learning rate
             self.scheduler.step(val_loss)
 
             # Print metrics with current learning rate
             print(f"Epoch {epoch+1}/{self.config['num_epochs']} - LR: {current_lr:.2e} - "
-                  f"Train Loss: {train_loss:.6f} (MSE: {train_mse_loss:.6f}, SSIM: {train_ssim_loss:.6f}) - "
-                  f"Val Loss: {val_loss:.6f} (MSE: {val_mse_loss:.6f}, SSIM: {val_ssim_loss:.6f}, SSIM-Metric: {val_ssim:.6f})")
+                  f"Train Loss: {train_loss:.6f} (MSE: {train_mse_loss:.6f}, SSIM-Loss: {train_ssim_loss:.6f}) - "
+                  f"Val Loss: {val_loss:.6f} (MSE: {val_mse_loss:.6f}, SSIM-Loss: {val_ssim_loss:.6f}, SSIM: {val_ssim:.6f}, PSNR: {val_psnr:.6f})")
 
             # Log learning rate to wandb
-            wandb.log({"learning_rate": current_lr})
+            self.run.log({"learning_rate": current_lr})
 
             # Save checkpoint if validation loss improved
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                self._save_checkpoint('best_model.pt', epoch, train_loss, val_loss, val_ssim)
-                print(f"Saved best model checkpoint with validation loss: {val_loss:.6f}, SSIM: {val_ssim:.6f}")
+                self._save_checkpoint('best_model.pt', epoch, train_loss, val_loss, val_ssim, val_psnr)
+                print(f"Saved best model checkpoint with validation loss: {val_loss:.6f}, SSIM: {val_ssim:.6f}, PSNR: {val_psnr:.6f}")
 
             # Save checkpoint every N epochs
             if (epoch + 1) % self.config.get('save_checkpoint_every', 5) == 0:
-                self._save_checkpoint(f'model_epoch_{epoch+1}.pt', epoch, train_loss, val_loss, val_ssim)
+                self._save_checkpoint(f'model_epoch_{epoch+1}.pt', epoch, train_loss, val_loss, val_ssim, val_psnr)
                 print(f"Saved checkpoint at epoch {epoch+1}")
 
             if current_lr <= self.min_learning_rate:
                 print(f"Reached minimum learning rate of {self.min_learning_rate}, stopping training.")
                 break
 
-    def _save_checkpoint(self, filename, epoch, train_loss, val_loss, val_ssim):
+        print("Training complete.")
+        self.run.finish()
+
+    def _save_checkpoint(self, filename, epoch, train_loss, val_loss, val_ssim, val_psnr):
         """Save a checkpoint."""
         checkpoint_dir = self.config.get('checkpoint_dir', 'checkpoints')
         checkpoint_path = os.path.join(checkpoint_dir, filename)
@@ -460,21 +477,23 @@ class KspaceTrainer:
             'train_loss': train_loss,
             'val_loss': val_loss,
             'val_ssim': val_ssim,
+            'val_psnr': val_psnr,
             'config': self.config
         }
         torch.save(checkpoint, checkpoint_path)
 
         # Log best model metrics
         if 'best' in filename:
-            wandb.run.summary.update({
+            self.run.summary.update({
                 "best_epoch": epoch + 1,
                 "best_val_loss": val_loss,
-                "best_val_ssim": val_ssim
+                "best_val_ssim": val_ssim,
+                "best_val_psnr": val_psnr
             })
 
     def __del__(self):
         """Cleanup when the trainer is deleted."""
         try:
-            wandb.finish()
+            self.run.finish()
         except:
             pass
