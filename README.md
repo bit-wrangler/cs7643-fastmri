@@ -82,7 +82,7 @@ pixz -d < ~/data/knee_singlecoil_val.tar.xz | tar -x -C ~/data
 ```
 curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 bash Miniconda3-latest-Linux-x86_64.sh
-conda init
+source ~/.bashrc
 conda env create --prefix ~/fastmri/env --file ~/fastmri/code/environment.yml
 conda activate ~/fastmri/env
 ```
@@ -104,3 +104,11 @@ To detach from a persistent remote session:
 Ctrl+b d
 ```
 
+#### training
+
+```
+cd ~/fastmri/code
+conda activate ~/fastmri/env
+python train_model_SCKSCWMT.py
+```
+```

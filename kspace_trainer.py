@@ -77,7 +77,7 @@ class FastMRIDataset(Dataset):
             }
 
 
-def image_domain_losses(pred, target):
+def image_domain_losses(pred, target, use_l1=False):
     """
     Calculate both MSE and SSIM losses in image domain after converting from k-space
     Returns both losses separately
@@ -101,7 +101,10 @@ def image_domain_losses(pred, target):
     # For MSE, normalize the images
     pred_image_abs_norm = pred_image_abs / target_max.view(-1, 1, 1, 1)
     target_image_abs_norm = target_image_abs / target_max.view(-1, 1, 1, 1)
-    mse_loss = nn.MSELoss()(pred_image_abs_norm, target_image_abs_norm)
+    if use_l1:
+        mse_loss = nn.L1Loss()(pred_image_abs_norm, target_image_abs_norm)
+    else:
+        mse_loss = nn.MSELoss()(pred_image_abs_norm, target_image_abs_norm)
 
     # Calculate SSIM loss
     # For SSIM loss, we need to keep the dimensions
@@ -114,12 +117,12 @@ def image_domain_losses(pred, target):
     return mse_loss, ssim_loss_val
 
 
-def combined_loss(pred, target, mse_weight=1.0, ssim_weight=1000.0):
+def combined_loss(pred, target, mse_weight=1.0, ssim_weight=1000.0, use_l1=False):
     """
     Combined loss using both MSE and SSIM losses in the image domain
     Returns the combined loss and individual losses for tracking
     """
-    mse_loss, ssim_loss_val = image_domain_losses(pred, target)
+    mse_loss, ssim_loss_val = image_domain_losses(pred, target, use_l1=use_l1)
 
     # Combine losses with their respective weights
     total_loss = mse_weight * mse_loss + ssim_weight * ssim_loss_val
@@ -296,12 +299,15 @@ class KspaceTrainer:
             # Forward pass
             outputs = self._forward_pass(kspace, masked_kspace, mask)
 
+            use_l1 = self.config.get('use_l1', False)
+
             # Calculate loss
             loss, mse_loss, ssim_loss_val = combined_loss(
                 outputs,
                 kspace,
                 mse_weight=self.config.get('mse_weight', 1.0),
-                ssim_weight=self.config.get('ssim_weight', 1000.0)
+                ssim_weight=self.config.get('ssim_weight', 1000.0),
+                use_l1=use_l1
             )
 
             # Scale factor (for compatibility with original code)
@@ -364,12 +370,15 @@ class KspaceTrainer:
                 # Forward pass
                 outputs = self._forward_pass(kspace, masked_kspace, mask)
 
+                use_l1 = self.config.get('use_l1', False)
+
                 # Calculate loss
                 loss, mse_loss, ssim_loss_val = combined_loss(
                     outputs,
                     kspace,
                     mse_weight=self.config.get('mse_weight', 1.0),
-                    ssim_weight=self.config.get('ssim_weight', 1000.0)
+                    ssim_weight=self.config.get('ssim_weight', 1000.0),
+                    use_l1=use_l1
                 )
 
                 # Calculate SSIM
