@@ -12,6 +12,7 @@ configs = [
     # experiment 1 - control
 {
     'tags': ['transformer1', 'updated_trainer'], # ['transformer1', 'loss', 'psnr']
+    'notes': None, # 'control'
     # Data parameters
     'center_fractions': [0.04],
     'accelerations': [8],

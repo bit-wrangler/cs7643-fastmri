@@ -193,13 +193,17 @@ class KspaceTrainer:
         self.model = self.model.to(self.device)
 
         tags = None
+        notes = None
 
         if 'tags' in config:
             tags = config['tags']
 
+        if 'notes' in config:
+            notes = config['notes']
+
         # Initialize wandb
         project_name = os.environ.get('WANDB_PROJECT_NAME', 'cs7643-fastmri')
-        self.run = wandb.init(project=project_name, config=config, tags=tags)
+        self.run = wandb.init(project=project_name, config=config, tags=tags, notes=notes)
 
         # Log model information
         self.run.name = f"{type(model).__name__}_{self.run.id}"
