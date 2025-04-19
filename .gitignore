@@ -1,4 +1,7 @@
 .env
-__pycache__/
+*__pycache__/
 *.pt
 wandb/
+*.pyc
+OCUCFormer-main-master/OCUCFormer_MC/*
+*.sh
