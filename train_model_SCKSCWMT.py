@@ -17,21 +17,21 @@ CONFIG = {
     # Model hyperparameters
     'encoder_num_heads': 4,
     'decoder_num_heads': 2,
-    'pre_dims': 256,
+    'pre_dims': 64,
     'kernel_size': 5,
     'pre_layers': 8,
-    'hidden_size': 256,
+    'hidden_size': 64,
     'activation': 'relu',
     'H': 320,
     'W': 320,
 
     # Training hyperparameters
     'batch_size': 1,  # Reduced batch size to avoid CUDA errors
-    'num_epochs': 150,
+    'num_epochs': 50,
     'learning_rate': 1e-4,
     'weight_decay': 1e-5,
     'mse_weight': 1.0,
-    'ssim_weight': 1000.0,
+    'ssim_weight': 100.0,
     'min_learning_rate': 1e-6,
 
     # Paths

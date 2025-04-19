@@ -4,4 +4,12 @@
 wandb/
 *.pyc
 OCUCFormer-main-master/OCUCFormer_MC/*
-*.sh
+OCUCFormer-main-master/*.sh
+OCUCFormer-main-master/*.tiff
+OCUCFormer-main-master/*checkpoints_sc/*
+OCUCFormer-main-master/*/cartesian/*
+checkpoints_sc/*
+OCUCFormer-main-master/OCUCFormer_SC/summary/*
+OCUCFormer-main-master/OCUCFormer_SC/usmasks/*
+OCUCFormer-main-master/**/*.sh
+OCUCFormer-main-master/**/*.log

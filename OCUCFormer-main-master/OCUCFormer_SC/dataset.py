@@ -4,6 +4,7 @@ import numpy as np
 import h5py
 from torch.utils.data import Dataset
 import torch
+
 # from skimage import feature # Unused import
 import os
 # Remove dependency on utils.npComplexToTorch, use fastmri transforms
@@ -14,6 +15,8 @@ import warnings # Import warnings
 try:
     # Try importing from the standard location
     import fastmri.data.transforms as T
+    import fastmri
+
 except ImportError:
     # Fallback or error if fastmri not installed properly
     print("Error: Could not import fastmri.data.transforms.")
@@ -100,10 +103,11 @@ class SliceData(Dataset):
 
                 # 5. Compute undersampled image via iFFT
                 # Input to ifft2 should be complex (H, W, 2)
-                input_img_torch = T.ifft2(masked_kspace_torch) # Output: (H, W, 2)
+                # input_img_torch = T.ifft2(masked_kspace_torch) # Output: (H, W, 2)
+                input_img_torch = fastmri.ifft2c(masked_kspace_torch) # Output: (H, W, 2)
 
                 # We usually need the magnitude image as input to the model
-                input_img_abs = T.complex_abs(input_img_torch) # Output: (H, W)
+                input_img_abs = fastmri.complex_abs(input_img_torch) # Output: (H, W)
 
                 # 6. Prepare target tensor
                 target_torch = torch.from_numpy(target_np).float() # Ensure float
