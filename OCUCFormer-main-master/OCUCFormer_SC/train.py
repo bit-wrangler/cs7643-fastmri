@@ -50,15 +50,16 @@ CONFIG = {
     'report_interval': 100,           # Default: 100
 
     # == Model Hyperparameters (defaults match argparse) ==
-    'num_pools': 1,                   # Default: 4
+    'num_pools': 4,                   # Default: 4
     'drop_prob': 0.0,                 # Default: 0.0
-    'num_chans': 1,                  # Default: 32
-    'timesteps': 1,                   # Default: 5
+    'num_chans': 16,                  # Default: 32
+    'timesteps': 4,                   # Default: 5
 
     # == Other Settings (defaults match argparse) ==
     'data_parallel': False,           # Default: False
     'device': 'cuda',                 # Default: 'cuda'
 
+    # 'save_checkpoint_every': 5,
 }
 
 
@@ -302,7 +303,7 @@ def main(args):
     train_path_env = os.getenv('SINGLECOIL_TRAIN_PATH')
     val_path_env = os.getenv('SINGLECOIL_VAL_PATH')
     usmask_path_env = os.getenv('USMASK_PATH') # Check if usmask_path is in .env too
-
+    print("READ ENV:", train_path_env, val_path_env, usmask_path_env)
     # Prioritize .env paths if they exist
     if train_path_env:
         args.train_path = pathlib.Path(train_path_env)
@@ -324,6 +325,7 @@ def main(args):
         else:
             raise ValueError("Validation path not specified either in .env (SINGLECOIL_VAL_PATH) or via --validation-path argument.")
 
+    print("FINDING HERE", usmask_path_env)
     if usmask_path_env:
          args.usmask_path = pathlib.Path(usmask_path_env)
          print(f"Using usmask path from .env: {args.usmask_path}")
