@@ -62,7 +62,7 @@ configs = [
     'save_checkpoint_every': 5,
     'checkpoint_dir': 'checkpoints',
 },
-
+    
 ]
 
 # Create checkpoint directory if it doesn't exist
