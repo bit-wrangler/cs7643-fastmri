@@ -1,3 +1,51 @@
+# Getting This Running for OMSCS DL
+
+🚧 Ensure proper amount of VRAM is available to run  
+
+
+### 1) Follow `requirements.txt` to get the required packages
+
+### 2) Setup a mask
+* **Verify/Create Base Mask Directory:** Ensure the base directory where masks will be stored exists. Adjust the path according to your project structure.
+    ```bash
+    # Example path - REPLACE with your actual path
+    mkdir -p /home/jschopme/dl/cs7643-fastmri/OCUCFormer-main-master/OCUCFormer_SC/usmasks
+    ```
+* **Run Mask Generation Script:** Execute the following command to generate a 4x Cartesian mask (adjust parameters like `--accelerations` and paths if needed for different experiments). This command creates the necessary subdirectories (`knee_singlecoil/cartesian/`) inside the base directory.
+    ```bash
+    # Example command - REPLACE paths with your actual paths
+    python OCUCFormer-main-master/OCUCFormer_SC/generate_masks.py \
+      --output-dir /home/jschopme/dl/cs7643-fastmri/OCUCFormer-main-master/OCUCFormer_SC/usmasks/knee_singlecoil/cartesian \
+      --accelerations 4 \
+      --center-fractions 0.08 \
+      --kspace-height 640 \
+      --kspace-width 368
+    ```
+
+## 3. Environment Setup (`.env` File)
+
+Using a `.env` file helps manage paths and sensitive information.
+
+```bash
+# Addition of USMASK_PATH
+SINGLECOIL_TRAIN_PATH=<your-path>/knee_singlecoil_val/singlecoil_train/
+SINGLECOIL_VAL_PATH=<your-path>/knee_singlecoil_test/singlecoil_val/
+WANDB_API_KEY=
+WANDB_PROJECT_NAME=cs7643-fastmri
+USMASK_PATH=<your-path>/cs7643-fastmri/OCUCFormer-main-master/OCUCFormer_SC/usmasks/
+WANDB_ENTITY=
+```
+* **Create `.env` File:** In the directory where you plan to run `train.py` (e.g., the root `OCUCFormer-main-master` directory), create a file named exactly `.env`.
+* **Add Content:** Populate the `.env` file with your specific paths and optional WandB configuration. **CRITICAL:** Ensure `USMASK_PATH` points to the **base** mask directory you created in Step 2, *not* the subdirectory.
+
+## 4) Set Hyperparameters within `train.py`
+- `OCUCFormer-main-master/OCUCFormer_SC/train.py`
+  - similar to `train_model_SCKSCWMT.py` we specify hyperparameters within the file
+- navigate to proper parent directory and run as follows:
+```bash
+cd cs7643-fastmri
+python OCUCFormer-main-master/OCUCFormer_SC/train.py
+```
 # Official Implementation of OCUCFormer: An Over-Complete Under-Complete Transformer Network for Accelerated MRI Reconstruction in PyTorch
 
 ## [OCUCFormer](https://www.sciencedirect.com/science/article/pii/S0262885624003330a)
