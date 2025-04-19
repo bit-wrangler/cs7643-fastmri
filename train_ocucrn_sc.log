@@ -1,0 +1,185 @@
+2025-04-19 00:33:29,291 - INFO - Using device: cuda:0
+2025-04-19 00:33:29,443 - INFO - Starting training from scratch.
+2025-04-19 00:33:29,443 - INFO - Namespace(seed=42, num_pools=4, drop_prob=0.0, num_chans=32, batch_size=1, num_epochs=150, lr=0.001, lr_step_size=40, lr_gamma=0.1, weight_decay=0.0, report_interval=100, data_parallel=False, device=device(type='cuda', index=0), exp_dir=PosixPath('.'), resume=False, checkpoint=None, train_path=PosixPath('/mnt/c/Users/jacob/Downloads/knee_singlecoil_val/singlecoil_val'), validation_path=PosixPath('/mnt/c/Users/jacob/Downloads/knee_singlecoil_test/singlecoil_test'), timesteps=5, acceleration_factor='4x', dataset_type='knee_singlecoil', usmask_path=PosixPath('/home/jschopme/dl/cs7643-fastmri/ocucu/OCUCFormer_SC/usmasks'), mask_type='cartesian')
+2025-04-19 00:33:29,444 - INFO - OCUCFormer(
+  (ocrn): OCRN(
+    (patch_embed_in): OverlapPatchEmbed(
+      (proj_dw): Conv2d(1, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (proj_pw): Conv2d(1, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): BiasFree_LayerNorm()
+      )
+    )
+    (encoder_level1): OverlapPatchEmbed(
+      (proj_dw): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=32, bias=False)
+      (proj_pw): Conv2d(32, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): WithBias_LayerNorm()
+      )
+    )
+    (up1_2): Upsample(
+      (body): Sequential(
+        (0): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=32, bias=False)
+        (1): Conv2d(32, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (2): PixelShuffle(upscale_factor=2)
+      )
+    )
+    (encoder_level2): Sequential(
+      (0): TransformerBlock(
+        (norm1): LayerNorm(
+          (body): WithBias_LayerNorm()
+        )
+        (attn): Attention(
+          (qkv): Conv2d(16, 48, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (qkv_dwconv): Conv2d(48, 48, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=48, bias=False)
+          (project_out): Conv2d(16, 16, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+        (norm2): LayerNorm(
+          (body): WithBias_LayerNorm()
+        )
+        (ffn): FeedForward(
+          (project_in): Conv2d(16, 84, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (dwconv): Conv2d(84, 84, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=84, bias=False)
+          (project_out): Conv2d(42, 16, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+      )
+      (1): TransformerBlock(
+        (norm1): LayerNorm(
+          (body): WithBias_LayerNorm()
+        )
+        (attn): Attention(
+          (qkv): Conv2d(16, 48, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (qkv_dwconv): Conv2d(48, 48, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=48, bias=False)
+          (project_out): Conv2d(16, 16, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+        (norm2): LayerNorm(
+          (body): WithBias_LayerNorm()
+        )
+        (ffn): FeedForward(
+          (project_in): Conv2d(16, 84, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (dwconv): Conv2d(84, 84, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=84, bias=False)
+          (project_out): Conv2d(42, 16, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+      )
+    )
+    (residual): ModuleList(
+      (0-3): 4 x OverlapPatchEmbed(
+        (proj_dw): Conv2d(16, 16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=16, bias=False)
+        (proj_pw): Conv2d(16, 16, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (norm): LayerNorm(
+          (body): WithBias_LayerNorm()
+        )
+      )
+    )
+    (down2_1): Downsample(
+      (body): Sequential(
+        (0): Conv2d(16, 16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=16, bias=False)
+        (1): Conv2d(16, 8, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (2): PixelUnshuffle(downscale_factor=2)
+      )
+    )
+    (decoder_level1): OverlapPatchEmbed(
+      (proj_dw): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=64, bias=False)
+      (proj_pw): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): WithBias_LayerNorm()
+      )
+    )
+    (patch_embed_out): Conv2d(64, 1, kernel_size=(1, 1), stride=(1, 1), bias=False)
+    (dc): DataConsistencyLayer()
+  )
+  (ucrn): UCRN(
+    (patch_embed_in): OverlapPatchEmbed(
+      (proj_dw): Conv2d(1, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+      (proj_pw): Conv2d(1, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): BiasFree_LayerNorm()
+      )
+    )
+    (encoder_level1): OverlapPatchEmbed(
+      (proj_dw): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=32, bias=False)
+      (proj_pw): Conv2d(32, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): WithBias_LayerNorm()
+      )
+    )
+    (down1_2): Downsample(
+      (body): Sequential(
+        (0): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=32, bias=False)
+        (1): Conv2d(32, 16, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (2): PixelUnshuffle(downscale_factor=2)
+      )
+    )
+    (encoder_level2): OverlapPatchEmbed(
+      (proj_dw): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=64, bias=False)
+      (proj_pw): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): WithBias_LayerNorm()
+      )
+    )
+    (residual): ModuleList(
+      (0-3): 4 x OverlapPatchEmbed(
+        (proj_dw): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=64, bias=False)
+        (proj_pw): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (norm): LayerNorm(
+          (body): WithBias_LayerNorm()
+        )
+      )
+    )
+    (up2_1): Upsample(
+      (body): Sequential(
+        (0): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=64, bias=False)
+        (1): Conv2d(64, 128, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        (2): PixelShuffle(upscale_factor=2)
+      )
+    )
+    (decoder_level1): Sequential(
+      (0): TransformerBlock(
+        (norm1): LayerNorm(
+          (body): WithBias_LayerNorm()
+        )
+        (attn): Attention(
+          (qkv): Conv2d(64, 192, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (qkv_dwconv): Conv2d(192, 192, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=192, bias=False)
+          (project_out): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+        (norm2): LayerNorm(
+          (body): WithBias_LayerNorm()
+        )
+        (ffn): FeedForward(
+          (project_in): Conv2d(64, 340, kernel_size=(1, 1), stride=(1, 1), bias=False)
+          (dwconv): Conv2d(340, 340, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=340, bias=False)
+          (project_out): Conv2d(170, 64, kernel_size=(1, 1), stride=(1, 1), bias=False)
+        )
+      )
+    )
+    (patch_embed_out): Conv2d(64, 1, kernel_size=(1, 1), stride=(1, 1), bias=False)
+    (dc): DataConsistencyLayer()
+  )
+  (embed_chans_in): Conv2d(1, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+  (refinement): Sequential(
+    (0): OverlapPatchEmbed(
+      (proj_dw): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=32, bias=False)
+      (proj_pw): Conv2d(32, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): WithBias_LayerNorm()
+      )
+    )
+    (1): OverlapPatchEmbed(
+      (proj_dw): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=32, bias=False)
+      (proj_pw): Conv2d(32, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): WithBias_LayerNorm()
+      )
+    )
+    (2): OverlapPatchEmbed(
+      (proj_dw): Conv2d(32, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), groups=32, bias=False)
+      (proj_pw): Conv2d(32, 32, kernel_size=(1, 1), stride=(1, 1), bias=False)
+      (norm): LayerNorm(
+        (body): WithBias_LayerNorm()
+      )
+    )
+  )
+  (embed_chans_out): Conv2d(32, 1, kernel_size=(1, 1), stride=(1, 1), bias=False)
+  (dc): DataConsistencyLayer()
+)

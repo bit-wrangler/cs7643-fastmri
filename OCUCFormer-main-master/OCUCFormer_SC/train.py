@@ -50,15 +50,16 @@ CONFIG = {
     'report_interval': 100,           # Default: 100
 
     # == Model Hyperparameters (defaults match argparse) ==
-    'num_pools': 1,                   # Default: 4
+    'num_pools': 4,                   # Default: 4
     'drop_prob': 0.0,                 # Default: 0.0
-    'num_chans': 1,                  # Default: 32
-    'timesteps': 1,                   # Default: 5
+    'num_chans': 16,                  # Default: 32
+    'timesteps': 4,                   # Default: 5
 
     # == Other Settings (defaults match argparse) ==
     'data_parallel': False,           # Default: False
     'device': 'cuda',                 # Default: 'cuda'
 
+    # 'save_checkpoint_every': 5,
 }
 
 
@@ -109,44 +110,78 @@ def create_data_loaders(args):
     )
     return train_loader, dev_loader, display_loader1
 
-
-def train_epoch(args, epoch, model,data_loader, optimizer, writer):
+# def train_epoch(args, epoch, model,data_loader, optimizer, writer):
+import torchvision.transforms.functional as TF
+def train_epoch(args, epoch, model, data_loader, optimizer, writer): # Removed writer
 
     model.train()
     avg_loss = 0.
     start_epoch = start_iter = time.perf_counter()
     global_step = epoch * len(data_loader)
     loop = tqdm(data_loader, desc=f"Epoch {epoch} Train")
+    current_lr = optimizer.param_groups[0]['lr'] # Get current learning rate
 
     for iter, data in enumerate(loop):
-        input, input_kspace, target, mask = data # Make sure dataset returns 4 items
+        input_img, input_kspace, target_img, mask = data # Renamed for clarity
 
-        input = input.unsqueeze(1).to(args.device).float()
-        input_kspace = input_kspace.to(args.device).float() # K-space likely complex float
-        target = target.unsqueeze(1).to(args.device).float()
-        mask = mask.to(args.device).float() # Mask is usually float
+        input_img = input_img.unsqueeze(1).to(args.device).float()
+        input_kspace = input_kspace.to(args.device).float() # Assuming complex stored as 2 channels
+        target_img = target_img.unsqueeze(1).to(args.device).float() # Shape: [B, 1, 320, 320]
+        mask = mask.to(args.device).float()
 
-        output = model(input, input_kspace, mask)
+        output_img = model(input_img, input_kspace, mask) # Expected shape: [B, 1, 640, 368]
 
-        loss = F.l1_loss(output, target)
+        # --- START FIX: Center Crop Output to Match Target ---
+        # Get target spatial dimensions
+        target_h, target_w = target_img.shape[2], target_img.shape[3] # Should be 320, 320
+
+        # Check if output shape differs from target shape
+        if output_img.shape[2] != target_h or output_img.shape[3] != target_w:
+             # Use torchvision's functional center_crop
+             # This assumes output_img is larger or equal in size to target_img
+             # If output could be smaller, add checks or use resizing instead.
+             try:
+                 output_img_cropped = TF.center_crop(output_img, (target_h, target_w))
+                 # Optional: Log a warning only once to avoid spamming logs
+                 # if iter == 0 and epoch == start_epoch: # Assuming start_epoch is available
+                 #    logging.warning(f"Model output shape {output_img.shape} differs from target shape {target_img.shape}. Cropping output for loss calculation.")
+             except Exception as crop_error:
+                 logging.error(f"Error cropping output tensor: {crop_error}. Output shape: {output_img.shape}, Target shape: {target_img.shape}")
+                 # Handle error appropriately, e.g., skip batch or raise error
+                 continue # Skip this batch if cropping fails
+        else:
+             output_img_cropped = output_img # No cropping needed if shapes match
+
+        # Ensure shapes match after potential cropping before loss calculation
+        if output_img_cropped.shape != target_img.shape:
+             logging.error(f"Shape mismatch AFTER cropping! Output: {output_img_cropped.shape}, Target: {target_img.shape}. Skipping loss calculation.")
+             continue # Skip if shapes still don't match
+
+        loss = F.l1_loss(output_img_cropped, target_img) # Calculate loss on cropped output
+        # --- END FIX ---
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         avg_loss = 0.99 * avg_loss + 0.01 * loss.item() if iter > 0 else loss.item()
-        writer.add_scalar('TrainLoss', loss.item(), global_step + iter)
 
+        # --- Wandb Logging within epoch ---
         if iter % args.report_interval == 0:
+            # Log using wandb... (rest of the logging code)
+            # ... (wandb logging code remains the same)
+
             logging.info(
                 f'Epoch = [{epoch:3d}/{args.num_epochs:3d}] '
                 f'Iter = [{iter:4d}/{len(data_loader):4d}] '
                 f'Loss = {loss.item():.4g} Avg Loss = {avg_loss:.4g} '
+                f'LR = {current_lr:.4g} '
                 f'Time = {time.perf_counter() - start_iter:.4f}s',
             )
         start_iter = time.perf_counter()
-        loop.set_postfix({'Loss': avg_loss})
+        loop.set_postfix({'AvgLoss': avg_loss, 'LR': current_lr})
 
-    return avg_loss, time.perf_counter() - start_epoch
+    return avg_loss, time.perf_counter() - start_epoch, current_lr
 
 
 def evaluate(args, epoch, model, data_loader, writer):
@@ -302,7 +337,7 @@ def main(args):
     train_path_env = os.getenv('SINGLECOIL_TRAIN_PATH')
     val_path_env = os.getenv('SINGLECOIL_VAL_PATH')
     usmask_path_env = os.getenv('USMASK_PATH') # Check if usmask_path is in .env too
-
+    print("READ ENV:", train_path_env, val_path_env, usmask_path_env)
     # Prioritize .env paths if they exist
     if train_path_env:
         args.train_path = pathlib.Path(train_path_env)
@@ -324,6 +359,7 @@ def main(args):
         else:
             raise ValueError("Validation path not specified either in .env (SINGLECOIL_VAL_PATH) or via --validation-path argument.")
 
+    print("FINDING HERE", usmask_path_env)
     if usmask_path_env:
          args.usmask_path = pathlib.Path(usmask_path_env)
          print(f"Using usmask path from .env: {args.usmask_path}")

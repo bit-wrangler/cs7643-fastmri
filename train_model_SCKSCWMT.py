@@ -11,33 +11,33 @@ dotenv.load_dotenv()
 configs = [
     # experiment 1 - control
 {
-    'tags': ['transformer1', 'updated_trainer'], # ['transformer1', 'loss', 'psnr']
-    'notes': None, # 'control'
+    'tags': ['transformer1', 'updated_trainer', "small_model_test"], # ['transformer1', 'loss', 'psnr']
+    'notes': "testing smaller batch size models", # 'control'
     # Data parameters
     'center_fractions': [0.04],
     'accelerations': [8],
     'seed': 42,
 
     # Model hyperparameters
-    'encoder_num_heads': 8,
+    'encoder_num_heads': 4,
     'decoder_num_heads': 4,
     'pre_dims': 256,
     'kernel_size': 5,
     'pre_layers': 0,
-    'hidden_size': 256,
+    'hidden_size': 128,
     'activation': 'relu',
     'H': 320,
     'W': 320,
 
     # Training hyperparameters
     'batch_size': 1,  # Reduced batch size to avoid CUDA errors
-    'num_epochs': 250,
+    'num_epochs': 30,
     'learning_rate': 1e-4,
-    'weight_decay': 1e-5,
+    'weight_decay': 1e-6,
     'mse_weight': 1.,
-    'ssim_weight': 1000.,
+    'ssim_weight': 50.,
     'terminate_patience': 10,
-    'use_l1': False,
+    'use_l1': True,
 
     'scheduler': {
         'type': 'ReduceLROnPlateau',
