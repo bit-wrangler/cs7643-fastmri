@@ -9,8 +9,9 @@ dotenv.load_dotenv()
 
 # Training and model hyperparameters
 configs = [
+    # experiment 1 - control
 {
-    'tags': None, # ['transformer1', 'loss', 'psnr']
+    'tags': ['transformer1', 'updated_trainer'], # ['transformer1', 'loss', 'psnr']
     # Data parameters
     'center_fractions': [0.04],
     'accelerations': [8],
@@ -29,12 +30,28 @@ configs = [
 
     # Training hyperparameters
     'batch_size': 1,  # Reduced batch size to avoid CUDA errors
-    'num_epochs': 150,
+    'num_epochs': 250,
     'learning_rate': 1e-4,
     'weight_decay': 1e-5,
     'mse_weight': 1.,
     'ssim_weight': 1000.,
-    'min_learning_rate': 1e-6,
+    'terminate_patience': 10,
+    'use_l1': False,
+
+    'scheduler': {
+        'type': 'ReduceLROnPlateau',
+        'factor': 0.5,
+        'patience': 5,
+    },
+
+    # 'scheduler': {
+    #     'type': 'CyclicLR',
+    #     'base_lr': 1e-6,
+    #     'max_lr': 2e-4,
+    #     'step_size_up': 250,
+    #     'mode': 'exp_range',
+    #     'gamma': 0.99999,
+    # },
 
     # Paths
     'train_path': os.environ.get('SINGLECOIL_TRAIN_PATH'),

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class SingleCoilKspaceTransformerAutoencoder3(nn.Module):
+class SingleCoilKspaceTransformerAutoencoder4(nn.Module):
     def __init__(
             self,
             encoder_num_heads: int = 1,
@@ -89,35 +89,42 @@ class SingleCoilKspaceTransformerAutoencoder3(nn.Module):
         # post_transformer to go from transformer_hidden_size channels to kspace (2*H channels)
         self.post_transformer = nn.Conv1d(transformer_hidden_size, 2*H, kernel_size=1)
 
-    def forward(self, kspace):
+    def forward(self, kspace, mask):
         # kspace is of shape (n_slices, 2, H, W)
 
         n_slices = kspace.shape[0]
         H = kspace.shape[2]
         W = kspace.shape[3]
+        M = mask.sum()
 
         # create position tensor of shape (1, 1, W)
         position = torch.arange(W).unsqueeze(0).unsqueeze(0).to(kspace.device)
 
+        # copy non-masked columns of position tensor to new tensor of shape (1, 1, M)
+        filtered_positions = position[:, :, mask.squeeze()]
+
+        # copy non-masked columns of kspace to new tensor of shape (n_slices, 2, H, M)
+        filtered_kspace = kspace[:, :, :, mask.squeeze()]
+
         # pointwise conv to go from kspace (2*H channels) to transformer_hidden_size channels
-        pre_transformer = self.pre_transformer(kspace.reshape(n_slices, 2*H, W)) # (n_slices, 2*H, W) -> (n_slices, transformer_hidden_size, W)
+        pre_transformer = self.pre_transformer(filtered_kspace.reshape(n_slices, 2*H, M)) # (n_slices, 2*H, M) -> (n_slices, transformer_hidden_size, W)
 
         # pre_transformer position embedding
-        pre_transformer_position_embedding = self.pre_transformer_position_embedding(position) # (1, 1, W) -> (1,1, W, transformer_hidden_size)
-        pre_transformer_position_embedding = pre_transformer_position_embedding.repeat(n_slices, 1, 1, 1) # (n_slices, 1, W, transformer_hidden_size)
-        pre_transformer_position_embedding = pre_transformer_position_embedding.squeeze(1).permute(0, 2, 1) # (n_slices, W, transformer_hidden_size)
+        pre_transformer_position_embedding = self.pre_transformer_position_embedding(filtered_positions) # (1, 1, M) -> (1,1, M, transformer_hidden_size)
+        pre_transformer_position_embedding = pre_transformer_position_embedding.repeat(n_slices, 1, 1, 1) # (n_slices, 1, M, transformer_hidden_size)
+        pre_transformer_position_embedding = pre_transformer_position_embedding.squeeze(1).permute(0, 2, 1) # (n_slices, M, transformer_hidden_size)
 
         # add pre_transformer position embedding to pre_transformer output
         pre_transformer = pre_transformer + pre_transformer_position_embedding
 
         # add summary token to pre_transformer output
-        pre_transformer = pre_transformer.permute(0, 2, 1) # (n_slices, W, transformer_hidden_size)
+        pre_transformer = pre_transformer.permute(0, 2, 1) # (n_slices, M, transformer_hidden_size)
 
         # pre_transformer = torch.cat([summary_token, pre_transformer], dim=1) # (n_slices, W+nummary_tokens, transformer_hidden_size)
 
         # encoder n_slices(batch_size), W+n_summary_tokens (seq_len), transformer_hidden_size (embed_dim)
         # encoder_output = self.encoder(pre_transformer, pre_transformer, pre_transformer)[0] # (n_slices, W+n_ummary_tokens, transformer_hidden_size)
-        encoder_output = self.encoder(pre_transformer) # (n_slices, W, transformer_hidden_size)
+        encoder_output = self.encoder(pre_transformer) # (n_slices, M, transformer_hidden_size)
 
         # decoder input n_slices(batch_size), W+nummary_tokens (seq_len), transformer_hidden_size (embed_dim)
         # decoder_input = torch.zeros(n_slices, W+self.n_summary_tokens, self.transformer_hidden_size).to(kspace.device) # (n_slices, W+n_summary_tokens, transformer_hidden_size)
@@ -131,7 +138,7 @@ class SingleCoilKspaceTransformerAutoencoder3(nn.Module):
         summary_tokens = self.summary_token.unsqueeze(0).repeat(n_slices, 1, 1) # (n_slices, n_summary_tokens, transformer_hidden_size)
         decoder1_target = summary_tokens # (n_slices, n_summary_tokens, transformer_hidden_size)
         decoder1_memory = encoder_output
-        decoder1_output = self.decoder1(decoder1_target, decoder1_memory) # (n_slices, W, transformer_hidden_size) -> (n_slices, n_summary_tokens, transformer_hidden_size)
+        decoder1_output = self.decoder1(decoder1_target, decoder1_memory) # (n_slices, M, transformer_hidden_size) -> (n_slices, n_summary_tokens, transformer_hidden_size)
 
         decoder2_memory = decoder1_output # (n_slices, n_summary_tokens, transformer_hidden_size)
         decoder2_target = self.decoder_input_position_embedding(position) # (1, 1, W, transformer_hidden_size)

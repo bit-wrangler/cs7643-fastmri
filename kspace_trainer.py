@@ -95,12 +95,15 @@ def image_domain_losses(pred, target, use_l1=False):
     target_image_abs = fastmri.complex_abs(target_image)
 
     # Get the maximum value for normalization and SSIM calculation
-    target_max = torch.max(target_image_abs.view(target_image_abs.size(0), -1), dim=1)[0]
+    eps = 1e-6
+    target_max = torch.max(
+        target_image_abs.view(target_image_abs.size(0), -1), dim=1
+    )[0].clamp(min=eps)
 
     # Calculate MSE loss
     # For MSE, normalize the images
-    pred_image_abs_norm = pred_image_abs / target_max.view(-1, 1, 1, 1)
-    target_image_abs_norm = target_image_abs / target_max.view(-1, 1, 1, 1)
+    pred_image_abs_norm   = pred_image_abs  / target_max.view(-1,1,1,1)
+    target_image_abs_norm = target_image_abs / target_max.view(-1,1,1,1)
     if use_l1:
         mse_loss = nn.L1Loss()(pred_image_abs_norm, target_image_abs_norm)
     else:
@@ -148,6 +151,24 @@ def centered_crop_1d(tensor, target_W):
     start_W = (W - target_W) // 2
     return tensor[:, :, start_W:start_W+target_W, :]
 
+class EarlyStopping:
+    def __init__(self, patience=5, min_delta=1e-4):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = None
+
+    def __call__(self, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif self.best_loss - val_loss > self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False
 
 class KspaceTrainer:
     def __init__(self, config, model, forward_func=None):
@@ -207,16 +228,39 @@ class KspaceTrainer:
             weight_decay=self.config.get('weight_decay', 1e-5)
         )
 
-        # Initialize learning rate scheduler
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer,
-            mode='min',
-            factor=0.5,
-            patience=5,
-            verbose=True
-        )
+        config_contains_scheduler = 'scheduler' in config and isinstance(config['scheduler'], dict)
 
-        self.min_learning_rate = self.config.get('min_learning_rate', 1e-6)
+        scheduler_type = 'ReduceLROnPlateau'
+        scheduler_args = {
+            'factor': 0.5,
+            'patience': 5,
+        }
+
+        if config_contains_scheduler:
+            scheduler_type = config['scheduler']['type']
+            scheduler_args = {k: v for k, v in config['scheduler'].items() if k != 'type'}
+
+        if scheduler_type == 'ReduceLROnPlateau':
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode='min',
+                factor=scheduler_args.get('factor', 0.5),
+                patience=scheduler_args.get('patience', 5),
+                verbose=True
+            )
+
+        elif scheduler_type == 'CyclicLR':
+            self.scheduler = optim.lr_scheduler.CyclicLR(
+                self.optimizer,
+                base_lr=scheduler_args.get('base_lr', 1e-6),
+                max_lr=scheduler_args.get('max_lr', 2e-4),
+                step_size_up=scheduler_args.get('step_size_up', 250),
+                mode=scheduler_args.get('mode', 'exp_range'),
+                gamma=scheduler_args.get('gamma', 0.99994),
+            )
+
+        print(f"Using scheduler: {scheduler_type}")
+        print(f"Scheduler config: {scheduler_args}")
 
     def _get_dataloaders(self):
         """Create and return train and validation dataloaders."""
@@ -282,8 +326,13 @@ class KspaceTrainer:
         running_ssim_loss = 0.0  # For SSIM loss
         total_slices = 0
 
+        running_lr = 0.0
+
         # Create progress bar
         pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{self.config['num_epochs']}")
+
+        n_batches = len(dataloader)
+        batch_offset = epoch * n_batches
 
         for batch_idx, batch in enumerate(pbar):
             # Process batch
@@ -316,34 +365,42 @@ class KspaceTrainer:
 
             # Backward pass and optimize
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
-            # Update running losses
-            running_loss += loss.item() / scale_factor  # Unscale for reporting
+            # Update running losses - multiply by number of slices to calculate per-slice average later
+            running_loss += (loss.item() / scale_factor) * n_slices  # Unscale for reporting
             running_kspace_loss += 0  # No longer using kspace loss
-            running_image_loss += mse_loss.item()  # Track MSE loss
-            running_ssim_loss += ssim_loss_val.item()  # Track SSIM loss
+            running_image_loss += mse_loss.item() * n_slices  # Track MSE loss
+            running_ssim_loss += ssim_loss_val.item() * n_slices  # Track SSIM loss
 
-            # Update progress bar
+            current_lr = self.optimizer.param_groups[0]['lr']
+            running_lr += current_lr
+
+            # Update progress bar - show per-slice metrics
             current_metrics = {
-                'loss': running_loss / (batch_idx + 1),
-                'mse_loss': running_image_loss / (batch_idx + 1),
-                'ssim_loss': running_ssim_loss / (batch_idx + 1),
-                'slices': total_slices
+                'loss': running_loss / total_slices,
+                'mse_loss': running_image_loss / total_slices,
+                'ssim_loss': running_ssim_loss / total_slices,
+                'slices': total_slices,
+                'lr': current_lr
             }
             pbar.set_postfix(current_metrics)
+            if type(self.scheduler) == optim.lr_scheduler.CyclicLR:
+                self.scheduler.step()
 
-        # Calculate average losses
-        avg_loss = running_loss / len(dataloader) if len(dataloader) > 0 else 0
-        avg_mse_loss = running_image_loss / len(dataloader) if len(dataloader) > 0 else 0
-        avg_ssim_loss = running_ssim_loss / len(dataloader) if len(dataloader) > 0 else 0
+        # Calculate average losses per slice
+        avg_loss = running_loss / total_slices if total_slices > 0 else 0
+        avg_mse_loss = running_image_loss / total_slices if total_slices > 0 else 0
+        avg_ssim_loss = running_ssim_loss / total_slices if total_slices > 0 else 0
+        avg_lr = running_lr / n_batches
 
         # Log epoch training metrics to wandb
         self.run.log({
             "train_loss": avg_loss,
             "train_mse_loss": avg_mse_loss,
             "train_ssim_loss": avg_ssim_loss,
-            "epoch": epoch + 1
+            'learning_rate': avg_lr
         }, commit=False)
 
         return avg_loss, avg_mse_loss, avg_ssim_loss
@@ -435,6 +492,9 @@ class KspaceTrainer:
 
         # Training loop
         best_val_loss = float('inf')
+        early_stopping = EarlyStopping(patience=self.config.get('patience', 5))
+
+        # torch.autograd.set_detect_anomaly(True)
 
         for epoch in range(self.config['num_epochs']):
             current_lr = self.optimizer.param_groups[0]['lr']
@@ -445,7 +505,8 @@ class KspaceTrainer:
             val_loss, val_mse_loss, val_ssim_loss, val_ssim, val_psnr = self.validate(val_loader)
 
             # Update learning rate
-            self.scheduler.step(val_loss)
+            if type(self.scheduler) == optim.lr_scheduler.ReduceLROnPlateau:
+                self.scheduler.step(val_loss)
 
             # Print metrics with current learning rate
             print(f"Epoch {epoch+1}/{self.config['num_epochs']} - LR: {current_lr:.2e} - "
@@ -453,7 +514,8 @@ class KspaceTrainer:
                   f"Val Loss: {val_loss:.6f} (MSE: {val_mse_loss:.6f}, SSIM-Loss: {val_ssim_loss:.6f}, SSIM: {val_ssim:.6f}, PSNR: {val_psnr:.6f})")
 
             # Log learning rate to wandb
-            self.run.log({"learning_rate": current_lr})
+            # self.run.log({"learning_rate": current_lr})
+            self.run.log({'epoch': epoch + 1})
 
             # Save checkpoint if validation loss improved
             if val_loss < best_val_loss:
@@ -466,8 +528,8 @@ class KspaceTrainer:
                 self._save_checkpoint(f'model_epoch_{epoch+1}.pt', epoch, train_loss, val_loss, val_ssim, val_psnr)
                 print(f"Saved checkpoint at epoch {epoch+1}")
 
-            if current_lr <= self.min_learning_rate:
-                print(f"Reached minimum learning rate of {self.min_learning_rate}, stopping training.")
+            if early_stopping(val_loss):
+                print(f"Early stopping triggered, stopping training.")
                 break
 
         print("Training complete.")

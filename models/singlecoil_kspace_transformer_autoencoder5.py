@@ -1,0 +1,118 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SingleCoilKspaceTransformerAutoencoder5(nn.Module):
+    def __init__(
+            self,
+            
+            decoder1_num_heads: int = 1,
+            n_decoder1_layers: int = 1,
+
+            decoder2_num_heads: int = 1,
+            n_decoder2_layers: int = 1,
+
+            transformer_hidden_size: int = 256,
+            ff_dim: int = 256,
+            dropout: float = 0.1,
+            n_summary_tokens: int = 1,
+            W: int = 320,
+            H: int = 320,
+            ):
+        super().__init__()
+        self.decoder1_num_heads = decoder1_num_heads
+        self.n_decoder1_layers = n_decoder1_layers
+        self.decoder2_num_heads = decoder2_num_heads
+        self.n_decoder2_layers = n_decoder2_layers
+        self.transformer_hidden_size = transformer_hidden_size
+        self.ff_dim = ff_dim
+        self.dropout = dropout
+        self.n_summary_tokens = n_summary_tokens
+        self.W = W
+        self.H = H
+
+        # pre_transformer to go from kspace (2*H channels) to transformer_hidden_size channels
+        self.pre_transformer = nn.Conv1d(2*H, transformer_hidden_size, kernel_size=1)
+
+        self.pre_norm = nn.BatchNorm1d(self.transformer_hidden_size, eps=1e-6)
+
+        # pre_transformer position embedding
+        self.pre_transformer_position_embedding = nn.Embedding(W, transformer_hidden_size)
+
+        # summary token of shape (transformer_hidden_size)
+        self.summary_token = nn.Parameter(torch.randn(n_summary_tokens, transformer_hidden_size))
+
+        self.decoder1 = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(
+                transformer_hidden_size,
+                decoder1_num_heads,
+                batch_first=True,
+                dim_feedforward=ff_dim,
+                dropout=dropout,
+            ),
+            n_decoder1_layers,
+        )
+
+        self.decoder2 = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(
+                transformer_hidden_size,
+                decoder2_num_heads,
+                batch_first=True,
+                dim_feedforward=ff_dim,
+                dropout=dropout,
+            ),
+            n_decoder2_layers,
+        )
+
+        self.decoder2_position_embedding = nn.Embedding(W, transformer_hidden_size)
+
+        # post_transformer to go from transformer_hidden_size channels to kspace (2*H channels)
+        self.post_transformer = nn.Conv1d(transformer_hidden_size, 2*H, kernel_size=1)
+
+    def forward(self, kspace, mask):
+        # kspace is of shape (n_slices, 2, H, W)
+
+        n_slices = kspace.shape[0]
+        H = kspace.shape[2]
+        W = kspace.shape[3]
+        M = mask.sum()
+
+        # create position tensor of shape (1, 1, W)
+        position = torch.arange(W).unsqueeze(0).unsqueeze(0).to(kspace.device)
+
+        # copy non-masked columns of position tensor to new tensor of shape (1, 1, M)
+        filtered_positions = position[:, :, mask.squeeze()]
+
+        # copy non-masked columns of kspace to new tensor of shape (n_slices, 2, H, M)
+        filtered_kspace = kspace[:, :, :, mask.squeeze()]
+
+        # pointwise conv to go from kspace (2*H channels) to transformer_hidden_size channels
+        pre_transformer = self.pre_transformer(filtered_kspace.reshape(n_slices, 2*H, M)) # (n_slices, 2*H, M) -> (n_slices, transformer_hidden_size, W)
+
+        # pre_transformer position embedding
+        pre_transformer_position_embedding = self.pre_transformer_position_embedding(filtered_positions) # (1, 1, M) -> (1,1, M, transformer_hidden_size)
+        pre_transformer_position_embedding = pre_transformer_position_embedding.repeat(n_slices, 1, 1, 1) # (n_slices, 1, M, transformer_hidden_size)
+        pre_transformer_position_embedding = pre_transformer_position_embedding.squeeze(1).permute(0, 2, 1) # (n_slices, M, transformer_hidden_size)
+
+        # add pre_transformer position embedding to pre_transformer output
+        pre_transformer = pre_transformer + pre_transformer_position_embedding
+        pre_transformer = self.pre_norm(pre_transformer) # (n_slices, transformer_hidden_size, M)
+
+        decoder1_memory = pre_transformer.permute(0, 2, 1) # (n_slices, M, transformer_hidden_size)
+        decoder1_target = self.summary_token.unsqueeze(0).repeat(n_slices, 1, 1) # (n_slices, n_summary_tokens, transformer_hidden_size)
+
+        encoder_output = self.decoder1(decoder1_target, decoder1_memory) # {(n_slices, M, transformer_hidden_size), (n_slices, n_summary_tokens, transformer_hidden_size)} -> (n_slices, n_summary_tokens, transformer_hidden_size)
+        decoder2_memory = encoder_output # (n_slices, n_summary_tokens, transformer_hidden_size)
+        decoder2_target = self.decoder2_position_embedding(position) # (1, 1, W, transformer_hidden_size)
+        decoder2_target = decoder2_target.repeat(n_slices, 1, 1, 1) # (n_slices, 1, W, transformer_hidden_size)
+        decoder2_target = decoder2_target.squeeze(1) # (n_slices, W, transformer_hidden_size)
+
+        decoder_output = self.decoder2(decoder2_target, decoder2_memory) # (n_slices, W, transformer_hidden_size) -> (n_slices, W, transformer_hidden_size)
+        decoder_output = decoder_output.permute(0, 2, 1) # (n_slices, transformer_hidden_size, W)
+
+        output = self.post_transformer(decoder_output) # (n_slices, transformer_hidden_size, W) -> (n_slices, 2*H, W)
+        output = output.reshape(n_slices, 2, H, W) # (n_slices, 2*H, W) -> (n_slices, 2, H, W)
+
+        return output
+
+

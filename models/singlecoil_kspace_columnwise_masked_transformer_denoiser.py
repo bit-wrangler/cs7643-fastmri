@@ -84,6 +84,8 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         # pointwise conv to go from kspace (2*H channels) to pre_dims channels
         self.pre_conv = nn.Conv1d(2*H, pre_dims, kernel_size=1)
 
+        self.pre_norm = nn.BatchNorm1d(self.pre_dims, eps=1e-6)
+
         # pre_conv position embedding
         self.pre_conv_position_embedding = nn.Embedding(W, pre_dims)
 
@@ -155,6 +157,7 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
 
         # add pre_conv position embedding to pre_conv output
         pre_conv = pre_conv + pre_conv_position_embedding # (n_slices, pre_dims, M)
+        pre_conv = self.pre_norm(pre_conv) # (n_slices, pre_dims, M)
 
         # pre_conv layers
         pre_conv = self.pre_conv_layers(pre_conv) # (n_slices, pre_dims, M) -> (n_slices, pre_dims, M)

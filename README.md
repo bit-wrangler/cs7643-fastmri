@@ -68,13 +68,12 @@ rsync -avz --exclude='.git/' --exclude='checkpoints/' --exclude='wandb/' --exclu
 #### copy data to local SSD
 
 ```
-sudo apt install pv
-sudo apt install pixz
+sudo apt install -y pv pixz
 mkdir ~/data
 rsync -ah --progress ~/fastmri/data/knee_singlecoil_train.tar.xz ~/fastmri/data/knee_singlecoil_val.tar.xz ~/data/
-for f in ~/data/knee_singlecoil_train.tar.xz ~/data/knee_singlecoil_val.tar.xz; do pv "$f" | pixz -d | tar -x -C ~/data ; done
 pixz -d < ~/data/knee_singlecoil_train.tar.xz | tar -x -C ~/data
 pixz -d < ~/data/knee_singlecoil_val.tar.xz | tar -x -C ~/data
+echo "done"
 ```
 
 #### create environment on remote system

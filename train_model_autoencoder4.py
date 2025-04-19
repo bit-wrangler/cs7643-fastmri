@@ -2,7 +2,7 @@ import dotenv
 import os
 import torch
 from kspace_trainer import KspaceTrainer
-from models.singlecoil_kspace_transformer_autoencoder3 import SingleCoilKspaceTransformerAutoencoder3
+from models.singlecoil_kspace_transformer_autoencoder4 import SingleCoilKspaceTransformerAutoencoder4
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -10,17 +10,17 @@ dotenv.load_dotenv()
 # Training and model hyperparameters
 configs = [
 {
-    'tags': ['autoencoder3'], # ['transformer1', 'loss', 'psnr']
+    'tags': ['autoencoder4'], # ['transformer1', 'loss', 'psnr']
     # Data parameters
-    'center_fractions': [0.04],
-    'accelerations': [8],
+    'center_fractions': [0.04,0.04,0.04,0.04],
+    'accelerations': [1,2,4,8],
     'seed': 42,
     'H': 320,
     'W': 320,
 
     # Model hyperparameters
     'model': {
-        'encoder_num_heads': 4,
+        'encoder_num_heads': 8,
         'n_encoder_layers': 2,
         'decoder1_num_heads': 8,
         'n_decoder1_layers': 2,
@@ -28,22 +28,22 @@ configs = [
         'n_decoder2_layers': 2,
         'transformer_hidden_size': 128,
         'ff_dim': 256,
-        'dropout': 0.2,
-        'n_summary_tokens': 4,
+        'dropout': 0.1,
+        'n_summary_tokens': 32,
         'H': 320,
         'W': 320,
     },
 
     # Training hyperparameters
     'batch_size': 1,  # Reduced batch size to avoid CUDA errors
-    'num_epochs': 200,
+    'num_epochs': 400,
     'learning_rate': 2e-4,
     'lr_decay': 0.99999,
     'weight_decay': 1e-5,
     'mse_weight': 1.,
     'ssim_weight': 10.,
     'min_learning_rate': 1e-6,
-    'patience': 30,
+    'patience': 100,
     'use_l1': True,
 
     # Paths
@@ -61,12 +61,12 @@ os.makedirs(configs[0]['checkpoint_dir'], exist_ok=True)
 def train_model():
     for CONFIG in configs:
         # Initialize model with parameters from CONFIG
-        model = SingleCoilKspaceTransformerAutoencoder3(
+        model = SingleCoilKspaceTransformerAutoencoder4(
             **CONFIG['model']
         )
 
         # Create trainer instance
-        trainer = KspaceTrainer(CONFIG, model, forward_func=lambda kspace, masked_kspace, mask, model: model(kspace))
+        trainer = KspaceTrainer(CONFIG, model, forward_func=lambda kspace, masked_kspace, mask, model: model(kspace,mask))
 
         # Start training
         trainer.train()
