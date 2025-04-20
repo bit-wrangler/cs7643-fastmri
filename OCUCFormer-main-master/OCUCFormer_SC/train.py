@@ -7,21 +7,60 @@ import time
 import functools
 import numpy as np
 import argparse
-import os  # <-- Added import
-from dotenv import load_dotenv # <-- Added import
+import os  
+from dotenv import load_dotenv 
 
 import torch
 import torchvision
 from tensorboardX import SummaryWriter
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
-from dataset import SliceData,SliceDisplayDataDev # <-- Make sure these use paths correctly
-from models import OCUCFormer # Assuming OCUCFormer is the correct model for SC too
+from dataset import SliceData,SliceDisplayDataDev 
+from models import OCUCFormer 
 import torchvision
 from torch import nn
 from torch.autograd import Variable
 from torch import optim
 from tqdm import tqdm
+
+CONFIG = {
+    
+
+    # == Experiment Directory & Checkpointing ==
+    'checkpoint': 'checkpoints_sc',  # Directory to save checkpoints (from --exp-dir default)
+    'resume': False,                 # From --resume flag default
+    'resume_checkpoint_path': None,  # Specific checkpoint file to resume from (from --checkpoint default)
+    'exp_dir': 'checkpoints_sc',     # Matches the original --exp-dir default, often used for logging
+
+    # == Data & Mask Parameters ==
+    # NOTE: These were required arguments in argparse and MUST be set correctly.
+    # Values here are placeholders based on your previous config.
+    'dataset_type': 'knee_singlecoil',  # REQUIRED: From --dataset_type
+    'mask_type': 'cartesian',           # REQUIRED: From --mask_type
+    'acceleration_factor': "4x",           # REQUIRED: From --acceleration_factor (needs to match mask)
+
+    # == Training Hyperparameters (defaults match argparse) ==
+    'batch_size': 1,                  # Default: 2
+    'num_epochs': 150,                # Default: 150
+    'lr': 0.001,                      # Default: 0.001
+    'lr_step_size': 40,               # Default: 40
+    'lr_gamma': 0.1,                  # Default: 0.1
+    'weight_decay': 0.0,              # Default: 0.0
+    'seed': 42,                       # Default: 42
+    'report_interval': 100,           # Default: 100
+
+    # == Model Hyperparameters (defaults match argparse) ==
+    'num_pools': 1,                   # Default: 4
+    'drop_prob': 0.0,                 # Default: 0.0
+    'num_chans': 1,                  # Default: 32
+    'timesteps': 1,                   # Default: 5
+
+    # == Other Settings (defaults match argparse) ==
+    'data_parallel': False,           # Default: False
+    'device': 'cuda',                 # Default: 'cuda'
+
+}
+
 
 def create_datasets(args):
     # This function expects args.train_path and args.validation_path to be Path objects
@@ -420,7 +459,9 @@ def create_arg_parser():
 
 
 if __name__ == '__main__':
-    args = create_arg_parser().parse_args()
+    # args = create_arg_parser().parse_args()
+    from argparse import Namespace
+    args = Namespace(**CONFIG)
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -434,3 +475,20 @@ if __name__ == '__main__':
 
     print(args)
     main(args)
+
+    
+
+    # # args = create_arg_parser().parse_args()
+    # random.seed(CONFIG.seed)
+    # np.random.seed(CONFIG.seed)
+    # torch.manual_seed(CONFIG.seed)
+    # # Ensure CUDA seeds are set if using GPU
+    # if CONFIG.device.startswith('cuda'):
+    #     torch.cuda.manual_seed(args.seed)
+    #     torch.cuda.manual_seed_all(args.seed) # For multi-GPU
+    #     # Potentially set deterministic options for reproducibility
+    #     # torch.backends.cudnn.deterministic = True
+    #     # torch.backends.cudnn.benchmark = False
+
+    # print(CONFIG)
+    # main(args)
