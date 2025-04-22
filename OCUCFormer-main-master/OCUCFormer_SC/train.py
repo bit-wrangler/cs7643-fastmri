@@ -128,8 +128,21 @@ def train_epoch(args, epoch, model, data_loader, optimizer, writer): # Removed w
         input_kspace = input_kspace.to(args.device).float() # Assuming complex stored as 2 channels
         target_img = target_img.unsqueeze(1).to(args.device).float() # Shape: [B, 1, 320, 320]
         mask = mask.to(args.device).float()
+        
+        _,_,H_img,W_img = input_img.shape
+        _,H_ksp,W_ksp,_ = input_kspace.shape
+
+        if W_img != W_ksp:
+            pad_w = W_ksp - W_img        # = 48 if mask width 368
+            pad_left  = pad_w // 2
+            pad_right = pad_w - pad_left
+            # F.pad expects (W_left, W_right, H_top, H_bottom)
+            input_img = F.pad(input_img, (pad_left, pad_right, 0, 0), "constant", 0)
+
 
         output_img = model(input_img, input_kspace, mask) # Expected shape: [B, 1, 640, 368]
+
+        output_img = TF.center_crop(output_img, (320, 320))
 
         # --- START FIX: Center Crop Output to Match Target ---
         # Get target spatial dimensions

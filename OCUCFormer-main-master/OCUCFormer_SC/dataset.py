@@ -1,149 +1,176 @@
+# OCUCFormer-main-master/OCUCFormer_SC/dataset.py
+
 import pathlib
 import random
 import numpy as np
 import h5py
 from torch.utils.data import Dataset
 import torch
-
-# from skimage import feature # Unused import
 import os
-# Remove dependency on utils.npComplexToTorch, use fastmri transforms
-# from utils import npComplexToTorch
 import warnings # Import warnings
+import logging # Import logging
+import sys # Import sys for exit
+import torch.nn.functional as F # Import F for padding
 
 # --- Import necessary fastmri transforms ---
 try:
     # Try importing from the standard location
     import fastmri.data.transforms as T
     import fastmri
-
-except ImportError:
-    # Fallback or error if fastmri not installed properly
-    print("Error: Could not import fastmri.data.transforms.")
+except ImportError as e:
+    print(f"Error importing fastmri library: {e}")
     print("Please ensure the fastmri library is installed correctly (`pip install fastmri`).")
-    raise
+    # Exit if fastmri is essential and not found
+    sys.exit(1)
+
+# Define the standard width for intermediate k-space processing (matching mask generation)
+KSPACE_CROP_WIDTH = 368
+# Define the final image size for model input/output/target comparison
+FINAL_IMG_SIZE = 320
+
+# --- Helper Function for K-space Crop or Pad ---
+def crop_or_pad_kspace(kspace: torch.Tensor, target_shape: tuple):
+    """
+    Crop or pad k-space tensor from shape [2, H, W] to [2, target_h, target_w].
+    """
+    target_h, target_w = target_shape
+    c, h, w = kspace.shape
+
+    # --- Crop ---
+    crop_h = max(0, h - target_h)
+    crop_w = max(0, w - target_w)
+    h_start = crop_h // 2
+    w_start = crop_w // 2
+    cropped = kspace[:, h_start:h_start + min(h, target_h), w_start:w_start + min(w, target_w)]
+
+    # --- Pad ---
+    pad_h = max(0, target_h - cropped.shape[1])
+    pad_w = max(0, target_w - cropped.shape[2])
+    if pad_h or pad_w:
+        # F.pad expects (left, right, top, bottom)
+        pad = (pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2)
+        padded = F.pad(cropped, pad, mode='constant', value=0)
+        if padded.shape[1:] != (target_h, target_w):
+            raise RuntimeError(f"K-space pad failed: {padded.shape} vs {(2,target_h,target_w)}")
+        return padded
+    else:
+        if cropped.shape[1:] != (target_h, target_w):
+            raise RuntimeError(f"K-space crop failed: {cropped.shape} vs {(2,target_h,target_w)}")
+        return cropped
+
+
+def crop_or_pad_image(img: torch.Tensor, target_shape: tuple):
+    """
+    Crop or pad image tensor from shape [H, W] to [target_h, target_w].
+    """
+    target_h, target_w = target_shape
+    h, w = img.shape
+
+    # --- Crop ---
+    crop_h = max(0, h - target_h)
+    crop_w = max(0, w - target_w)
+    h_start = crop_h // 2
+    w_start = crop_w // 2
+    cropped = img[h_start:h_start + min(h, target_h), w_start:w_start + min(w, target_w)]
+
+    # --- Pad ---
+    pad_h = max(0, target_h - cropped.shape[0])
+    pad_w = max(0, target_w - cropped.shape[1])
+    if pad_h or pad_w:
+        pad = (pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2)
+        padded = F.pad(cropped, pad, mode='constant', value=0)
+        if padded.shape != (target_h, target_w):
+            raise RuntimeError(f"Image pad failed: {padded.shape} vs {(target_h,target_w)}")
+        return padded
+    else:
+        if cropped.shape != (target_h, target_w):
+            raise RuntimeError(f"Image crop failed: {cropped.shape} vs {(target_h,target_w)}")
+        return cropped
+
+
+# --- Dataset Classes ---
 
 class SliceData(Dataset):
     """
-    A PyTorch Dataset that provides access to MR image slices.
-    Loads raw kspace, applies mask, computes input image via iFFT.
+    Training dataset: returns (input_image, masked_kspace, target_image, mask_1d).
+    - input_image: [1, 320, 320]
+    - masked_kspace: [2, H, W] (H based on target height, W=368)
+    - target_image: [1, 320, 320]
+    - mask_1d: [368]
     """
-    def __init__(self, root: pathlib.Path, acc_factors: list, dataset_types: list, mask_types: list, train_or_valid: str, mask_path: pathlib.Path):
+    def __init__(self, root: pathlib.Path, acc_factors, dtypes, mtypes, split: str, mask_path: pathlib.Path):
         self.examples = []
-        self.mask_path = mask_path
-        # Store first elements for consistency in key checking and mask loading path structure
-        self.acc_factor = acc_factors[0]
-        self.dataset_type = dataset_types[0]
-        self.mask_type = mask_types[0]
+        self.mask_root = mask_path
+        self.acc = acc_factors[0]
+        self.dtype = dtypes[0]
+        self.mtype = mtypes[0]
 
-        # --- Simplified Path Logic ---
-        data_files_dir = root
-        if not data_files_dir.is_dir():
-            raise FileNotFoundError(f"Data directory specified ({train_or_valid}) not found: {data_files_dir}")
+        root = pathlib.Path(root)
+        if not root.is_dir():
+            raise FileNotFoundError(f"Data dir not found: {root}")
 
-        print(f"Looking for {train_or_valid} HDF5 files in: {data_files_dir}")
-        file_count = 0
-        example_count = 0
-
-        # Iterate through all files in the root directory
-        for fname in sorted(list(data_files_dir.iterdir())):
-            if fname.is_file() and fname.suffix in ['.h5', '.hdf5']:
-                file_count += 1
+        for f in sorted(root.iterdir()):
+            if f.suffix in ['.h5', '.hdf5']:
                 try:
-                    with h5py.File(fname, 'r') as hf:
-                        # Check if essential RAW data keys exist
-                        if 'kspace' in hf and 'reconstruction_esc' in hf and hf['kspace'].ndim >= 3:
-                            # Get num_slices from kspace now
-                            num_slices = hf['kspace'].shape[0]
-                            # Add examples for each slice
-                            # Store necessary info: file path, slice index
-                            # We'll use self.acc_factor etc. in getitem
-                            self.examples += [(fname, slice_idx) for slice_idx in range(num_slices)]
-                            example_count += num_slices
-                        else:
-                            print(f"Warning: Skipping file {fname}, missing required keys ('kspace', 'reconstruction_esc') or unexpected 'kspace' shape.")
-                except Exception as e:
-                    print(f"Warning: Could not process file {fname}: {e}")
-
-        print(f"Found {file_count} HDF5 files and added {example_count} examples for {train_or_valid}.")
-        if example_count == 0:
-             print(f"ERROR: No valid examples found in {data_files_dir}. Check HDF5 files and keys.")
-        # -----------------------------
+                    with h5py.File(f, 'r') as hf:
+                        ns = hf['kspace'].shape[0]
+                        self.examples += [(f, i) for i in range(ns)]
+                except Exception:
+                    logging.warning(f"Skipping bad file: {f}")
+        if not self.examples:
+            raise ValueError(f"No examples found in {root}")
 
     def __len__(self):
         return len(self.examples)
 
-    def __getitem__(self, i):
-        # Retrieve filename and slice index
-        fname, slice_num = self.examples[i]
-
+    def __getitem__(self, idx):
+        f, sl = self.examples[idx]
         try:
-            with h5py.File(fname, 'r') as data:
-                # 1. Load raw kspace and target
-                kspace_np = data['kspace'][slice_num] # Shape: (H, W) complex
-                target_np = data['reconstruction_esc'][slice_num] # Shape: (H, W) float/real
+            with h5py.File(f, 'r') as hf:
+                ksp = hf['kspace'][sl]              # shape (H, W, 2)
+                tgt = hf['reconstruction_esc'][sl]  # shape (H, W)
 
-                # 2. Convert kspace to PyTorch tensor (H, W, 2)
-                kspace_torch = T.to_tensor(kspace_np) # Shape: (H, W, 2)
+            # to_tensor -> [2, H, W]
+            ksp_t = T.to_tensor(ksp)
+            # crop/pad k-space to [2, H', 368]
+            target_h = tgt.shape[0]
+            ksp2 = crop_or_pad_kspace(ksp_t, (target_h, KSPACE_CROP_WIDTH))
 
-                # 3. Load the mask
-                mask_file = self.mask_path / self.dataset_type / self.mask_type / f'mask_{self.acc_factor}.npy'
-                if not mask_file.is_file():
-                     raise FileNotFoundError(f"Mask file not found: {mask_file}")
-                mask_np = np.load(mask_file) # Shape: (W,)
-                mask_torch = torch.from_numpy(mask_np).float() # Ensure float tensor
+            # load 1D mask
+            mask_file = self.mask_root / self.dtype / self.mtype / f'mask_{self.acc}.npy'
+            m = np.load(mask_file)
+            if m.shape[0] != KSPACE_CROP_WIDTH:
+                raise ValueError(f"Mask length {m.shape[0]} != {KSPACE_CROP_WIDTH}")
+            m_t = torch.from_numpy(m).float().to(ksp2.device)
 
-                # 4. Apply mask to kspace
-                # Expand mask to match kspace shape (H, W, 1) for broadcasting
-                # Mask needs to be applied to both real and imaginary (last dim size 2)
-                h, w, _ = kspace_torch.shape
-                mask_expanded = mask_torch.reshape(1, w, 1).expand(h, w, 1)
-                # Apply the mask (multiply k-space columns)
-                masked_kspace_torch = kspace_torch * mask_expanded
+            # apply mask: broadcast over [2, H', W]
+            ksp_m = ksp2 * m_t[None, None, :]
 
-                # 5. Compute undersampled image via iFFT
-                # Input to ifft2 should be complex (H, W, 2)
-                # input_img_torch = T.ifft2(masked_kspace_torch) # Output: (H, W, 2)
-                input_img_torch = fastmri.ifft2c(masked_kspace_torch) # Output: (H, W, 2)
+            # iFFT -> complex_abs -> [H', W]
+            im = fastmri.ifft2c(ksp_m)
+            im = fastmri.complex_abs(im)
+            im1 = crop_or_pad_image(im, (FINAL_IMG_SIZE, FINAL_IMG_SIZE))
 
-                # We usually need the magnitude image as input to the model
-                input_img_abs = fastmri.complex_abs(input_img_torch) # Output: (H, W)
+            # target
+            tgt_t = torch.from_numpy(tgt).float().to(im1.device)
+            tgt1 = crop_or_pad_image(tgt_t, (FINAL_IMG_SIZE, FINAL_IMG_SIZE))
 
-                # 6. Prepare target tensor
-                target_torch = torch.from_numpy(target_np).float() # Ensure float
-
-                # 7. Prepare mask tensor for return (model might need it)
-                # Return the expanded mask used for calculations? Or the 1D mask?
-                # The train_epoch uses mask directly with input/kspace, let's return the expanded one used
-                # Note: train_epoch passes this mask to the model, ensure model expects (H,W,1) or similar
-                # Let's return the 1D mask that was loaded, as the model might expect that format
-                # Or let's return the expanded mask without the complex dim for now
-                # return_mask = mask_expanded.squeeze(-1) # Shape (H, W)
-                # Check train_epoch: model(input, input_kspace, mask) - mask needs to be compatible
-                # If model does DC, it needs kspace and mask. Let's return the 1D mask (W,)
-                # and the masked_kspace (H, W, 2). Input image is also needed.
-                return_mask_torch = mask_torch # Return the original 1D mask (W,)
-
-            # Ensure correct data types for model (often float32)
-            input_img_final = input_img_abs.float()
-            masked_kspace_final = masked_kspace_torch.float() # Model might expect float real/imag pairs
-            target_final = target_torch.float()
-            return_mask_final = return_mask_torch.float()
-
-            # Return: undersampled_image, masked_kspace, target_image, 1D_mask
-            return input_img_final, masked_kspace_final, target_final, return_mask_final
-
-        except Exception as e:
-             print(f"Error loading data for index {i}, file {fname}, slice {slice_num}: {e}")
-             raise e
+            return (
+                im1.unsqueeze(0),      # [1,320,320]
+                ksp_m.float(),         # [2,H',368]
+                tgt1.unsqueeze(0),     # [1,320,320]
+                m_t                     # [368]
+            )
+        except Exception:
+            logging.error(f"Error idx {idx}, file {f}, slice {sl}", exc_info=True)
+            raise
 
 
-# --- SliceDataDev ---
-# Needs similar modification to load raw kspace and apply mask on the fly
 class SliceDataDev(Dataset):
     """
-    A PyTorch Dataset that provides access to MR image slices for Dev/Validation.
-    Loads raw kspace, applies mask, computes input image via iFFT.
+    Validation/Dev dataset. Loads raw kspace, crops/pads kspace, applies mask,
+    computes input image via iFFT, crops/pads input, loads target, crops/pads target.
+    Also returns filename and slice number.
     """
     def __init__(self, root: pathlib.Path, acc_factor: str, dataset_type: str, mask_type: str, mask_path: pathlib.Path):
         self.root = root
@@ -166,15 +193,14 @@ class SliceDataDev(Dataset):
                     file_count += 1
                     try:
                         with h5py.File(fname, 'r') as hf:
-                            # Check for raw data keys
                             if 'kspace' in hf and 'reconstruction_esc' in hf and hf['kspace'].ndim >= 3:
                                 num_slices = hf['kspace'].shape[0]
                                 self.examples += [(fname, slice_idx) for slice_idx in range(num_slices)]
                                 example_count += num_slices
                             else:
-                                print(f"Warning: Skipping validation file {fname}, missing required keys ('kspace', 'reconstruction_esc') or unexpected 'kspace' shape.")
+                                logging.warning(f"Skipping validation file {fname}, missing required keys or unexpected shape.")
                     except Exception as e:
-                         print(f"Warning: Could not read metadata from {fname}: {e}")
+                         logging.warning(f"Could not read metadata from {fname}: {e}")
         except Exception as e:
              print(f"Error listing files in {self.root}: {e}")
         print(f"Found {file_count} validation HDF5 files and added {example_count} examples.")
@@ -188,56 +214,46 @@ class SliceDataDev(Dataset):
 
         try:
             with h5py.File(fname, 'r') as data:
-                 # 1. Load raw kspace and target
                 kspace_np = data['kspace'][slice_num]
                 target_np = data['reconstruction_esc'][slice_num]
 
-                # 2. Convert kspace to PyTorch tensor (H, W, 2)
-                kspace_torch = T.to_tensor(kspace_np)
+                kspace_torch_orig = T.to_tensor(kspace_np)
 
-                # 3. Load the mask
+                kspace_crop_height = target_np.shape[0]
+                kspace_torch = crop_or_pad_kspace(kspace_torch_orig, (kspace_crop_height, KSPACE_CROP_WIDTH))
+
                 mask_file = self.mask_path / self.dataset_type / self.mask_type / f'mask_{self.acc_factor}.npy'
-                if not mask_file.is_file():
-                     raise FileNotFoundError(f"Mask file not found: {mask_file}")
+                if not mask_file.is_file(): raise FileNotFoundError(f"Mask file not found: {mask_file}")
                 mask_np = np.load(mask_file)
+                if mask_np.shape[0] != KSPACE_CROP_WIDTH: raise ValueError(f"Mask width {mask_np.shape[0]} != KSPACE_CROP_WIDTH {KSPACE_CROP_WIDTH}")
                 mask_torch = torch.from_numpy(mask_np).float()
 
-                # 4. Apply mask to kspace
                 h, w, _ = kspace_torch.shape
                 mask_expanded = mask_torch.reshape(1, w, 1).expand(h, w, 1)
                 masked_kspace_torch = kspace_torch * mask_expanded
 
-                # 5. Compute undersampled image via iFFT
-                input_img_torch = T.ifft2(masked_kspace_torch)
-                input_img_abs = T.complex_abs(input_img_torch)
+                input_img_torch = fastmri.ifft2c(masked_kspace_torch)
+                input_img_abs = fastmri.complex_abs(input_img_torch)
+                input_img_final = crop_or_pad_image(input_img_abs, (FINAL_IMG_SIZE, FINAL_IMG_SIZE))
 
-                # 6. Prepare target tensor
-                target_torch = torch.from_numpy(target_np).float()
+                target_torch_orig = torch.from_numpy(target_np).float()
+                target_final = crop_or_pad_image(target_torch_orig, (FINAL_IMG_SIZE, FINAL_IMG_SIZE))
 
-                # 7. Prepare mask tensor for return (1D version)
-                return_mask_torch = mask_torch
+                return_mask_final = mask_torch.float()
 
-            input_img_final = input_img_abs.float()
-            masked_kspace_final = masked_kspace_torch.float()
-            target_final = target_torch.float()
-            return_mask_final = return_mask_torch.float()
-
-            # Return items needed by valid.py/evaluate.py (check those scripts)
-            # valid.py likely needs: input_img, masked_kspace, target, mask, fname, slice_num
-            # Let's return input_img_abs, masked_kspace, target, 1D mask, fname, slice_num
-            return input_img_final, masked_kspace_final, target_final, return_mask_final, str(fname.name), slice_num
+            # Return: final_input_image, processed_masked_kspace, final_target_image, 1D_mask, fname_str, slice_int
+            return input_img_final.float(), masked_kspace_torch.float(), target_final.float(), return_mask_final, str(fname.name), slice_num
 
         except Exception as e:
-             print(f"Error loading validation data for index {i}, file {fname}, slice {slice_num}: {e}")
+             logging.error(f"Error loading validation data for index {i}, file {fname}, slice {slice_num}: {e}", exc_info=True)
              raise e
 
 
-# --- SliceDisplayDataDev ---
-# Needs similar modification if it's used (e.g., by train.py visualize)
 class SliceDisplayDataDev(Dataset):
     """
-    A PyTorch Dataset that provides access to MR image slices for display.
-    Loads raw kspace, applies mask, computes input image via iFFT.
+    Dataset for visualization. Loads raw kspace, crops/pads kspace, applies mask,
+    computes input image via iFFT, crops/pads input, loads target, crops/pads target.
+    Returns items needed by train_wand.py's visualize function.
     """
     def __init__(self, root: pathlib.Path, dataset_type: str, mask_type: str, acc_factor: str, mask_path: pathlib.Path):
         self.examples = []
@@ -249,12 +265,10 @@ class SliceDisplayDataDev(Dataset):
         data_files_dir = root
         if not data_files_dir.is_dir():
              print(f"Warning: Display data directory not found: {data_files_dir}")
-             return
+             return # Allow empty display dataset
 
-        # Construct mask path using pathlib - check existence
         self.mask_load_path = self.mask_path / self.dataset_type / self.mask_type / f'mask_{self.acc_factor}.npy'
         if not self.mask_load_path.is_file():
-            # Raise error here as display won't work without mask
             raise FileNotFoundError(f"Display mask file not found: {self.mask_load_path}")
 
         print(f"Looking for display HDF5 files in: {data_files_dir}")
@@ -267,15 +281,14 @@ class SliceDisplayDataDev(Dataset):
                     file_count += 1
                     try:
                         with h5py.File(fname, 'r') as hf:
-                             # Check for raw data keys
                             if 'kspace' in hf and 'reconstruction_esc' in hf and hf['kspace'].ndim >= 3:
                                 num_slices = hf['kspace'].shape[0]
                                 self.examples += [(fname, slice_idx) for slice_idx in range(num_slices)]
                                 example_count += num_slices
                             else:
-                                print(f"Warning: Skipping display file {fname}, missing required keys ('kspace', 'reconstruction_esc') or unexpected 'kspace' shape.")
+                                logging.warning(f"Skipping display file {fname}, missing required keys or unexpected shape.")
                     except Exception as e:
-                        print(f"Warning: Could not read metadata from display file {fname}: {e}")
+                        logging.warning(f"Could not read metadata from display file {fname}: {e}")
         except Exception as e:
              print(f"Error listing files in display directory {data_files_dir}: {e}")
         print(f"Found {file_count} display HDF5 files and added {example_count} display examples.")
@@ -289,42 +302,34 @@ class SliceDisplayDataDev(Dataset):
 
         try:
             with h5py.File(fname, 'r') as data:
-                # 1. Load raw kspace and target
                 kspace_np = data['kspace'][slice_num]
                 target_np = data['reconstruction_esc'][slice_num]
 
-                # 2. Convert kspace to PyTorch tensor (H, W, 2)
-                kspace_torch = T.to_tensor(kspace_np)
+                kspace_torch_orig = T.to_tensor(kspace_np)
 
-                # 3. Load the mask
+                kspace_crop_height = target_np.shape[0]
+                kspace_torch = crop_or_pad_kspace(kspace_torch_orig, (kspace_crop_height, KSPACE_CROP_WIDTH))
+
                 mask_np = np.load(self.mask_load_path)
+                if mask_np.shape[0] != KSPACE_CROP_WIDTH: raise ValueError(f"Mask width {mask_np.shape[0]} != KSPACE_CROP_WIDTH {KSPACE_CROP_WIDTH}")
                 mask_torch = torch.from_numpy(mask_np).float()
 
-                # 4. Apply mask to kspace
                 h, w, _ = kspace_torch.shape
                 mask_expanded = mask_torch.reshape(1, w, 1).expand(h, w, 1)
                 masked_kspace_torch = kspace_torch * mask_expanded
 
-                # 5. Compute undersampled image via iFFT
-                input_img_torch = T.ifft2(masked_kspace_torch)
-                input_img_abs = T.complex_abs(input_img_torch)
+                input_img_torch = fastmri.ifft2c(masked_kspace_torch)
+                input_img_abs = fastmri.complex_abs(input_img_torch)
+                input_img_final = crop_or_pad_image(input_img_abs, (FINAL_IMG_SIZE, FINAL_IMG_SIZE))
 
-                # 6. Prepare target tensor
-                target_torch = torch.from_numpy(target_np).float()
+                target_torch_orig = torch.from_numpy(target_np).float()
+                target_final = crop_or_pad_image(target_torch_orig, (FINAL_IMG_SIZE, FINAL_IMG_SIZE))
 
-                # 7. Prepare mask tensor for return (1D version)
-                return_mask_torch = mask_torch
+                return_mask_final = mask_torch.float()
 
-            input_img_final = input_img_abs.float()
-            masked_kspace_final = masked_kspace_torch.float() # Pass masked kspace
-            target_final = target_torch.float()
-            return_mask_final = return_mask_torch.float() # Pass 1D mask
-
-            # Return items needed by train.py visualize function: input, input_kspace, target, mask
-            # Note: visualize expects 4 items, let's match train_epoch's return format for now
-            # Return: undersampled_image, masked_kspace, target_image, 1D_mask
-            return input_img_final, masked_kspace_final, target_final, return_mask_final
+            # Return items needed by train_wand.py visualize function: input, kspace, target, mask
+            return input_img_final.float(), masked_kspace_torch.float(), target_final.float(), return_mask_final
 
         except Exception as e:
-             print(f"Error loading display data for index {i}, file {fname}, slice {slice_num}: {e}")
+             logging.error(f"Error loading display data for index {i}, file {fname}, slice {slice_num}: {e}", exc_info=True)
              raise e
