@@ -2,3 +2,8 @@
 __pycache__/
 *.pt
 wandb/
+OCUCFormer-main-master/*
+checkpoints_sc/*
+ReconFormer-main/data/*
+ReconFormer-main/summary/*
+*Zone.Identifier*

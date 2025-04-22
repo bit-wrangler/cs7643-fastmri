@@ -1,0 +1,85 @@
+name: reconformer
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  # ─── Language ──────────────────────────────────────────
+  - python=3.10
+
+  # ─── PyTorch & CUDA ────────────────────────────────────
+  - pytorch=2.5.1
+  - torchvision=0.20.1
+  - torchaudio=2.5.1
+  - pytorch-cuda=12.4       # pulls in cudatoolkit 12.4
+  - magma-cuda124=2.6.1     # GPU‑accelerated LAPACK
+
+  # ─── Core utils ────────────────────────────────────────
+  - absl-py
+  - blinker
+  - brotlipy
+  - bzip2
+  - c-ares
+  - ca-certificates
+  - cachetools
+  - certifi
+  - cffi
+  - chardet
+  - click
+  - cloudpickle
+  - cmake
+  - cryptography
+  - cycler
+  - cytoolz
+  - dask-core
+  - dataclasses
+  - decorator
+  - expat
+  - freetype
+  - future
+  - grpcio
+  - h5py
+  - hdf5
+  - imagecodecs-lite
+  - imageio
+  - kiwisolver
+  - lcms2
+  - libpng
+  - libtiff
+  - lz4-c
+  - markdown
+  - matplotlib-base
+  - mkl
+  - mkl-include
+  - mkl-service
+  - mkl_fft
+  - mkl_random
+  - networkx
+  - ninja
+  - numpy
+  - olefile
+  - openssl
+  - pillow
+  - pip
+  - protobuf
+  - pyasn1
+  - pyasn1-modules
+  - pycparser
+  - pyyaml
+  - requests
+  - scikit-image
+  - joblib
+  - nibabel
+  - packaging
+  - pandas
+  - pympler
+  - pytorch-lightning
+  - pytz
+  - runstats
+  - scikit-learn
+  - seaborn
+  - tensorboardx
+  - threadpoolctl
+  - timm
