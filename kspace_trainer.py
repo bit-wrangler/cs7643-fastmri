@@ -496,7 +496,7 @@ class KspaceTrainer:
 
         # Training loop
         best_val_loss = float('inf')
-        early_stopping = EarlyStopping(patience=self.config.get('patience', 5))
+        early_stopping = EarlyStopping(patience=self.config.get('terminate_patience', 10))
 
         # torch.autograd.set_detect_anomaly(True)
 
@@ -533,7 +533,7 @@ class KspaceTrainer:
                 print(f"Saved checkpoint at epoch {epoch+1}")
 
             if early_stopping(val_loss):
-                print(f"Early stopping triggered, stopping training.")
+                print(f"Early stopping triggered, stopping training. Best val loss: {best_val_loss:.6f}")
                 break
 
         print("Training complete.")

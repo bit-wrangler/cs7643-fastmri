@@ -2,3 +2,9 @@
 __pycache__/
 *.pt
 wandb/
+.idea/
+
+# poetry and deploy files
+poetry.lock
+pyproject.toml
+fmri.yml

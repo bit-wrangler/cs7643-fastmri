@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import TransformerEncoderLayer, TransformerEncoder, TransformerDecoderLayer, TransformerDecoder
 
 """
 The columnwise masked transformer denoiser for singlecoil kspace data.
@@ -70,6 +71,8 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
             kernel_size: int = 1,
             H: int = 320,
             W: int = 320,
+            encoder_layers: int = 1,
+            decoder_layers: int = 1,
     ):
         super().__init__()
         self.encoder_num_heads = encoder_num_heads
@@ -104,18 +107,26 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
             self.pre_conv_project = nn.Identity()
 
         # encoder
-        self.encoder = nn.MultiheadAttention(
-            hidden_size,
-            encoder_num_heads,
+        enc_layer = TransformerEncoderLayer(
+            d_model=hidden_size,
+            nhead=encoder_num_heads,
+            dim_feedforward=hidden_size * 4,
+            dropout=0.1,
+            activation=activation,
             batch_first=True,
         )
+        self.encoder = TransformerEncoder(enc_layer, num_layers=encoder_layers)
 
         # decoder
-        self.decoder = nn.MultiheadAttention(
-            hidden_size,
-            decoder_num_heads,
+        dec_layer = TransformerDecoderLayer(
+            d_model=hidden_size,
+            nhead=decoder_num_heads,
+            dim_feedforward=hidden_size * 4,
+            dropout=0.1,
+            activation=activation,
             batch_first=True,
         )
+        self.decoder = TransformerDecoder(dec_layer, num_layers=decoder_layers)
 
         # decoder input position embedding
         self.decoder_input_position_embedding = nn.Embedding(W, hidden_size)
@@ -167,7 +178,7 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         pre_conv = pre_conv.permute(0, 2, 1) # (n_slices, hidden_size, M) -> (n_slices, M, hidden_size)
 
         # encoder n_slices(batch_size), M (seq_len), hidden_size (embed_dim)
-        encoder_output = self.encoder(pre_conv, pre_conv, pre_conv)[0]
+        encoder_output = self.encoder(pre_conv)
 
         # decoder input n_slices(batch_size), M (seq_len), hidden_size (embed_dim)
         decoder_input = torch.zeros(n_slices, W, self.hidden_size).to(kspace.device) # (n_slices, W, hidden_size)
@@ -181,16 +192,14 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         decoder_input_position_embedding = decoder_input_position_embedding.squeeze(1)#.permute(0, 2, 1) # (n_slices, W, hidden_size)
         decoder_input = decoder_input + decoder_input_position_embedding
 
-        decoder_output = self.decoder(decoder_input, decoder_input, decoder_input)[0] # (n_slices, W, hidden_size) -> (n_slices, W, hidden_size)
+        decoder_output = self.decoder(decoder_input, encoder_output) # (n_slices, W, hidden_size) -> (n_slices, W, hidden_size)
+        decoder_output = decoder_output.permute(0, 2, 1)  # (n_slices, W, hidden_size) -> (n_slices, hidden_size, W)
 
-        decoder_output = decoder_output.permute(0, 2, 1) # (n_slices, hidden_size, W)
+        output_masked = self.post_conv(decoder_output)  # (n_slices, hidden_size, W) -> (n_slices, 2*H, W)
+        output_masked = output_masked.reshape(n_slices, 2, H, W)  # (n_slices, 2*H, W) -> (n_slices, 2, H, W)
 
-        output_masked = self.post_conv(decoder_output) # (n_slices, hidden_size, W) -> (n_slices, 2*H, W)
-        output_masked = output_masked.reshape(n_slices, 2, H, W) # (n_slices, 2*H, W) -> (n_slices, 2, H, W)
-
-        output = torch.zeros(n_slices, 2, H, W).to(kspace.device) # (n_slices, 2, H, W)
+        output = torch.zeros(n_slices, 2, H, W, device=kspace.device)  # (n_slices, 2, H, W)
         output[:, :, :, ~mask.squeeze()] = output_masked[:, :, :, ~mask.squeeze()]
         output[:, :, :, mask.squeeze()] = kspace[:, :, :, mask.squeeze()]
-
 
         return output
