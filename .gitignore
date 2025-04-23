@@ -2,3 +2,6 @@
 __pycache__/
 *.pt
 wandb/
+.DS_Store
+.idea/
+.ipynb_checkpoints/
