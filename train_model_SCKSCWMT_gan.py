@@ -3,7 +3,7 @@ import os
 import torch
 import fastmri
 from models.singlecoil_kspace_columnwise_masked_transformer_denoiser import SingleCoilKspaceColumnwiseMaskedTransformerDenoiser
-from kspace_trainer import KspaceTrainer
+from kspace_trainer_gan import KspaceTrainerGAN
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -11,8 +11,8 @@ dotenv.load_dotenv()
 # Training and model hyperparameters
 configs = [
     {
-    'tags': ['transformer1', 'updated_trainer_3'], # ['transformer1', 'loss', 'psnr']
-    'notes': 'control3', # 'control'
+    'tags': ['transformer1', 'gan'], # ['transformer1', 'loss', 'psnr']
+    'notes': 'gan test', # 'control'
     # Data parameters
     'val_center_fractions': [0.04],
     'val_accelerations': [8],
@@ -21,6 +21,7 @@ configs = [
     'seed': 42,
     'H': 320,
     'W': 320,
+
 
     # Model hyperparameters
     'model': {
@@ -36,16 +37,28 @@ configs = [
         'apply_pre_norm': False,
     },
 
+    'discriminator': {
+        'in_ch': 1,
+        'dim': 64,
+        'patch': 16,
+        'ksize': 9,
+        'depth': 8,
+    },
+
     # Training hyperparameters
     'batch_size': 1,  # Reduced batch size to avoid CUDA errors
     'num_epochs': 250,
     'learning_rate': 1e-4,
     'weight_decay': 1e-5,
     'mse_weight': 1.,
-    'ssim_weight': 1.,
+    'ssim_weight': 1000.,
     'terminate_patience': 10,
     'use_l1': False,
     'max_norm': 10.0,
+    'adv_weight'   : 0.01,
+    'd_lr'         : 1e-4,
+    'gan_start_recon_loss': 501.0,
+    'clamp_predicted': False,
 
     'scheduler': {
         'type': 'ReduceLROnPlateau',
@@ -98,7 +111,7 @@ def train_model():
 
             return pred_image_abs
 
-        trainer = KspaceTrainer(CONFIG, model, forward_func=forward_func)
+        trainer = KspaceTrainerGAN(CONFIG, model, forward_func=forward_func)
 
         # Start training
         trainer.train()
