@@ -11,8 +11,8 @@ dotenv.load_dotenv()
 # Training and model hyperparameters
 configs = [
     {
-    'tags': ['transformer1', 'updated_trainer_3'], # ['transformer1', 'loss', 'psnr']
-    'notes': 'control3', # 'control'
+    'tags': ['transformer1', 'updated_trainer_4'], # ['transformer1', 'loss', 'psnr']
+    'notes': 'control4 - max normalization', # 'control'
     # Data parameters
     'val_center_fractions': [0.04],
     'val_accelerations': [8],
@@ -34,6 +34,7 @@ configs = [
         'H': 320,
         'W': 320,
         'apply_pre_norm': False,
+        'apply_dc': False,
     },
 
     # Training hyperparameters
@@ -43,14 +44,17 @@ configs = [
     'weight_decay': 1e-5,
     'mse_weight': 1.,
     'ssim_weight': 1.,
-    'terminate_patience': 10,
+    'psnr_weight': 0.1,
+    'terminate_patience': 12,
     'use_l1': False,
+    'l1_transition_mse': 0.01,
     'max_norm': 10.0,
+    'normalization': 'max',
 
     'scheduler': {
         'type': 'ReduceLROnPlateau',
         'factor': 0.5,
-        'patience': 5,
+        'patience': 6,
     },
 
     # 'scheduler': {
@@ -96,7 +100,7 @@ def train_model():
             pred_image = fastmri.ifft2c(kspace_pred_permuted)
             pred_image_abs = fastmri.complex_abs(pred_image)
 
-            return pred_image_abs
+            return kspace_pred, pred_image_abs
 
         trainer = KspaceTrainer(CONFIG, model, forward_func=forward_func)
 
