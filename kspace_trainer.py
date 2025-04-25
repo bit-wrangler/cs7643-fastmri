@@ -535,6 +535,9 @@ class KspaceTrainer:
         # torch.autograd.set_detect_anomaly(True)
 
         for epoch in range(self.config['num_epochs']):
+
+            torch.cuda.empty_cache()
+
             current_lr = self.optimizer.param_groups[0]['lr']
             # Train for one epoch
             train_loss, train_mse_loss, train_ssim_loss = self.train_epoch(train_loader, epoch)
