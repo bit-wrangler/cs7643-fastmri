@@ -15,33 +15,40 @@ configs = [
     'tags': [''], # ['transformer1', 'loss', 'psnr']
     'notes': 'unet', # 'control'
     # Data parameters
-    'val_center_fractions': [0.04],
-    'val_accelerations': [8],
-    'train_center_fractions': [0.04],
-    'train_accelerations': [8],
+    'val_center_fractions': [0.08],
+    'val_accelerations': [4],
+    'train_center_fractions': [0.08],
+    'train_accelerations': [4],
     'seed': 42,
     'H': 320,
     'W': 320,
 
     # Model hyperparameters
+    # 'model': {
+    #     'encoder_num_heads': 8,
+    #     'decoder_num_heads': 4,
+    #     'pre_dims': 256,
+    #     'kernel_size': 5,
+    #     'pre_layers': 0,
+    #     'hidden_size': 256,
+    #     'activation': 'relu',
+    #     'H': 320,
+    #     'W': 320,
+    #     'apply_pre_norm': False,
+    # },
     'model': {
-        'encoder_num_heads': 8,
-        'decoder_num_heads': 4,
-        'pre_dims': 256,
-        'kernel_size': 5,
-        'pre_layers': 0,
-        'hidden_size': 256,
-        'activation': 'relu',
-        'H': 320,
-        'W': 320,
-        'apply_pre_norm': False,
+        'in_chans': 1,
+        'out_chans': 1,
+        'chans': 256,
+        'num_pool_layers': 4,
+        'drop_prob': 0
     },
 
     # Training hyperparameters
     'batch_size': 1,  # Reduced batch size to avoid CUDA errors
-    'num_epochs': 250,
-    'learning_rate': 1e-4,
-    'weight_decay': 1e-5,
+    'num_epochs': 50,
+    'learning_rate': 0.001,
+    'weight_decay': 0.0,
     'mse_weight': 1.,
     'ssim_weight': 1.,
     'terminate_patience': 10,
