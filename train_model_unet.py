@@ -97,12 +97,14 @@ def train_model():
         # Create trainer instance with a forward_func that returns image domain predictions
         def forward_func(kspace, masked_kspace, mask, image, model):
             # Get kspace prediction from model
-            kspace_pred = model(kspace, mask)
+            # kspace_pred = model(kspace, mask)
+            kspace_pred = model(image)
 
             # Convert to image domain
-            kspace_pred_permuted = kspace_pred.permute(0, 2, 3, 1)
-            pred_image = fastmri.ifft2c(kspace_pred_permuted)
-            pred_image_abs = fastmri.complex_abs(pred_image)
+            # kspace_pred_permuted = kspace_pred.permute(0, 2, 3, 1)
+            # pred_image = fastmri.ifft2c(kspace_pred_permuted)
+            # pred_image_abs = fastmri.complex_abs(pred_image)
+            pred_image_abs = fastmri.complex_abs(kspace_pred)
 
             return pred_image_abs
 
