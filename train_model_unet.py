@@ -98,6 +98,7 @@ def train_model():
         def forward_func(kspace, masked_kspace, mask, image, model):
             # Get kspace prediction from model
             # kspace_pred = model(kspace, mask)
+            print('Image shape in train_model forward_func %s', image.shape)
             kspace_pred = model(image)
 
             # Convert to image domain
