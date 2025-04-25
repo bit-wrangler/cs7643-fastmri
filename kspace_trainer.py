@@ -240,8 +240,7 @@ class KspaceTrainer:
                 self.optimizer,
                 mode='min',
                 factor=scheduler_args.get('factor', 0.5),
-                patience=scheduler_args.get('patience', 5),
-                verbose=True
+                patience=scheduler_args.get('patience', 5)
             )
 
         elif scheduler_type == 'CyclicLR':
