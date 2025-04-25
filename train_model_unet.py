@@ -12,7 +12,7 @@ dotenv.load_dotenv()
 # Training and model hyperparameters
 configs = [
     {
-    'tags': [''], # ['transformer1', 'loss', 'psnr']
+    'tags': ['unet'], # ['transformer1', 'loss', 'psnr']
     'notes': 'unet', # 'control'
     # Data parameters
     'val_center_fractions': [0.08],
