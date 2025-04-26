@@ -39,7 +39,7 @@ configs = [
     'model': {
         'in_chans': 1,
         'out_chans': 1,
-        'chans': 256,
+        'chans': 32,
         'num_pool_layers': 4,
         'drop_prob': 0
     },
