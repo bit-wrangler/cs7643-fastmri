@@ -195,14 +195,14 @@ def main():
 
     # instantiate model
     print("Instantiating model...")
-    net = ReconFormer(in_channels=2, out_channels=2, num_ch=(96, 48, 24),num_iter=1,   #5,
+    net = ReconFormer(in_channels=2, out_channels=2, num_ch=(96, 48, 24),num_iter=5,   #5,
         down_scales=(2,1,1.5), img_size=args.resolution, num_heads=(6,6,6), depths=(2,1,1),
         window_sizes=(8,8,8), mlp_ratio=2., resi_connection ='1conv',
         use_checkpoint=(False, False, False, False, False, False)
         # use_checkpoint=(True, True, True, True, True, True)
 
         ).to(args.device)
-    wandb.watch(net, log="all", log_graph=True, log_freq=5) 
+    wandb.watch(net, log="all", log_graph=True, log_freq=10) 
 
     # load pretrained weights
     print(f"Loading checkpoint: {args.checkpoint}")
