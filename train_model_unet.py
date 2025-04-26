@@ -106,9 +106,9 @@ def train_model():
             # kspace_pred_permuted = kspace_pred.permute(0, 2, 3, 1)
             # pred_image = fastmri.ifft2c(kspace_pred_permuted)
             # pred_image_abs = fastmri.complex_abs(pred_image)
-            pred_image_abs = fastmri.complex_abs(kspace_pred)
+            # pred_image_abs = fastmri.complex_abs(kspace_pred)
 
-            return pred_image_abs
+            return kspace_pred
 
         trainer = KspaceTrainer(CONFIG, model, forward_func=forward_func)
 
