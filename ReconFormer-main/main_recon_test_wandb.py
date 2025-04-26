@@ -21,19 +21,27 @@ from models.evaluation import test_recon_save
 from data.mri_data import SliceData, DataTransform
 from data.subsample import create_mask_for_mask_type
 from models.Recurrent_Transformer import ReconFormer
+try:
+    from ssim_loss import ssim as calculate_ssim_metric
+except ImportError:
+    print("Warning: Could not import ssim function from ssim_loss.py. SSIM metric will not be calculated.")
+    calculate_ssim_metric = None
+
+
+
 import dotenv
 
 dotenv.load_dotenv()
 
-def _create_dataset(data_path,data_transform, data_partition, sequence, bs, shuffle, sample_rate=None, display=False):
+def _create_dataset(data_path,data_transform, data_partition, sequence, bs, shuffle, sample_rate=None, challenge=None, display=False):
         # torch.cuda.empty_cache()
 
-        sample_rate = sample_rate or args.sample_rate
+        sample_rate = sample_rate or sample_rate
         dataset = SliceData(
             root=data_path / data_partition,
             transform=data_transform,
             sample_rate=sample_rate,
-            challenge=args.challenge,
+            challenge=challenge,
             sequence=sequence
         )
         return DataLoader(dataset, batch_size=bs, shuffle=shuffle, pin_memory=False, num_workers=8)
@@ -58,8 +66,8 @@ def create_dataloader(root_path, phase, transform, sequence, batch_size, shuffle
     )
 
 
-if __name__ == '__main__':
-    # disable HDF5 locking on network filesystems
+def main():
+        # disable HDF5 locking on network filesystems
     os.environ["HDF5_USE_FILE_LOCKING"] = 'FALSE'
 
     # parse command-line arguments
@@ -171,7 +179,8 @@ if __name__ == '__main__':
         val_data_transform = DataTransform(args.resolution, args.challenge, mask, use_seed=True)
 
         if args.phase == 'test':
-            dataset_val = _create_dataset(path_dict[args.test_dataset]/args.sequence,val_data_transform, 'val', args.sequence, args.bs, False, 1.0)
+                                                                # data_path,data_transform, data_partition, sequence, bs, shuffle, sample_rate=None, challenge=None, display=Fals
+            dataset_val = _create_dataset(path_dict[args.test_dataset]/args.sequence,val_data_transform, 'val', args.sequence, args.bs, False, 1.0, args.challenge)
     else:
         exit('Error: unrecognized dataset')
 
@@ -189,11 +198,11 @@ if __name__ == '__main__':
     net = ReconFormer(in_channels=2, out_channels=2, num_ch=(96, 48, 24),num_iter=1,   #5,
         down_scales=(2,1,1.5), img_size=args.resolution, num_heads=(6,6,6), depths=(2,1,1),
         window_sizes=(8,8,8), mlp_ratio=2., resi_connection ='1conv',
-        # use_checkpoint=(False, False, False, False, False, False)
-        use_checkpoint=(True, True, True, True, True, True)
+        use_checkpoint=(False, False, False, False, False, False)
+        # use_checkpoint=(True, True, True, True, True, True)
 
         ).to(args.device)
-    print(net)
+    wandb.watch(net, log="all", log_graph=True, log_freq=5) 
 
     # load pretrained weights
     print(f"Loading checkpoint: {args.checkpoint}")
@@ -229,25 +238,38 @@ if __name__ == '__main__':
 
     # run evaluation
     net.eval()
-    print("Starting evaluation loop...")
-    metrics = None
-    try:
-        with torch.no_grad():
-            metrics = test_recon_save(net, dataset_val, args)
-    except Exception as e:
-        print(f"Error during evaluation execution: {e}")
-        if run: wandb.finish(exit_code=1)
-        raise e
+    print("Running test_recon_save...")
+    with torch.no_grad():
+        metrics = test_recon_save(net, dataset_val, args) or {}
+    print("Metrics from test_recon_save:", metrics)
 
-    # format and log metrics with Test/ prefix
-    if isinstance(metrics, dict) and metrics:
-        print(f"Evaluation Metrics: {metrics}")
-        formatted_metrics = {f"Test/{k.upper()}": v for k, v in metrics.items()}
-        wandb.log(formatted_metrics)
-        wandb.run.summary.update(formatted_metrics)
-    else:
-        print("Warning: test_recon_save did not return a non-empty metrics dict for W&B logging.")
-        wandb.log({"Test/Metrics_Missing": 1})
+    # Compute SSIM if available
+    if calculate_ssim_metric is not None:
+        print("Computing SSIM loss over dataset...")
+        ssim_losses = []
+        for batch in dataset_val:
+            inp, tgt, mean, std, norm, fname, slice_idx, maxv, m, masked_k = batch
+            out = net(inp.to(device), masked_k.to(device), m.to(device))
+            # magnitude
+            pred = torch.abs(out[...,0] + 1j*out[...,1]).unsqueeze(1)
+            truth = torch.abs(tgt.to(device)[...,0] + 1j*tgt.to(device)[...,1]).unsqueeze(1)
+            data_range = torch.tensor([maxv], device=device)
+            loss_ssim = 1.0 - calculate_ssim_metric(pred, truth, data_range)
+            ssim_losses.append(loss_ssim.item())
+        avg_ssim = sum(ssim_losses)/len(ssim_losses)
+        metrics['ssim_loss'] = avg_ssim
+        print(f"Average SSIM loss: {avg_ssim}")
 
-    print("Evaluation complete. Finishing W&B run.")
+    # Log all metrics
+    to_log = {f"Test/{k}": v for k,v in metrics.items()}
+    wandb.log(to_log)
+    wandb.run.summary.update(to_log)
+    print("Logged to W&B:", to_log)
+
     wandb.finish()
+    print("Evaluation completed.")
+
+
+
+if __name__ == "__main__":
+    main()
