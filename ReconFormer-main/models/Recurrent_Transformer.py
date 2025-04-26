@@ -232,9 +232,7 @@ class TransBlock_OC(nn.Module):
         out = self.DC_layer(out, k0, mask)
 
         return out, hidden, h1_att, h2_att
-    
 
-from tqdm import tqdm
 
 class RefineModule(nn.Module):
     """
@@ -252,6 +250,7 @@ class RefineModule(nn.Module):
             nn.Conv2d(in_channels=nf, out_channels=nf, kernel_size=3, stride=1, padding=1,bias=True),
             nn.Conv2d(in_channels=nf, out_channels=out_channels, kernel_size=3, stride=1, padding=1, bias=True)
         )
+
         self.DC_layer = DataConsistencyInKspace()
 
     def forward(self, x, k0=None, mask=None):
@@ -267,32 +266,30 @@ class ReconFormer(nn.Module):
         super(ReconFormer, self).__init__()
 
         self.num_iter = num_iter
-        print('block 1')
+
         self.block1 = TransBlock_UC(in_channels=in_channels, out_channels=out_channels, nf=num_ch[0],
                                     down_scale=down_scales[0], num_head=num_heads[0], depth=depths[0],
                                     img_size=img_size, window_size=window_sizes[0], mlp_ratio=mlp_ratio,
                                     use_checkpoint=(use_checkpoint[0],use_checkpoint[1]),
                                     resi_connection =resi_connection)
-        print('block 2')
+
         self.block2 = TransBlock_UC(in_channels=in_channels, out_channels=out_channels, nf=num_ch[1],
                                     down_scale=down_scales[1], num_head=num_heads[1], depth=depths[1],
                                     img_size=img_size,window_size=window_sizes[1], mlp_ratio=mlp_ratio,
                                     use_checkpoint=(use_checkpoint[2],use_checkpoint[3]),
                                     resi_connection = resi_connection)
-        print('block 3')
+
         self.block3 = TransBlock_OC(in_channels=in_channels, out_channels=out_channels, nf=num_ch[2],
                                     up_scale=down_scales[2], num_head=num_heads[2], depth=depths[2],
                                     img_size=img_size,window_size=window_sizes[2], mlp_ratio=mlp_ratio,
                                     use_checkpoint=(use_checkpoint[4],use_checkpoint[5]),
                                     resi_connection =resi_connection)
-        print('before refine model')
-        self.RM = RefineModule(in_channels=int(out_channels * 3),nf=num_ch[2],out_channels=out_channels)
 
+        self.RM = RefineModule(in_channels=int(out_channels * 3),nf=num_ch[2],out_channels=out_channels)
 
     def forward(self, x, k0=None, mask=None):
         outputs = []
         for i in range(self.num_iter):
-            print(i)
             if i ==0:
                 x1, h1, _, _ = self.block1(x,  k0=k0, mask=mask)
                 x2, h2, _, _ = self.block2(x1, k0=k0, mask=mask)

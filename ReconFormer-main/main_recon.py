@@ -126,7 +126,10 @@ def main():
 
     if args.model == 'ReconFormer':
         print('begininng training', args.device)
-        net = ReconFormer(in_channels=4, out_channels=2, num_ch=(96, 48, 24),num_iter=5,
+#         example_input, *_ = next(iter(dataset_train))
+#         in_ch = example_input.shape[1]
+# # net = ReconFormer(in_channels=in_ch, …)
+        net = ReconFormer(in_channels=2, out_channels=2, num_ch=(96, 48, 24),num_iter=5,
         down_scales=(2,1,1.5), img_size=args.resolution, num_heads=(6,6,6), depths=(2,1,1),
         window_sizes=(8,8,8), mlp_ratio=2., resi_connection ='1conv',
         use_checkpoint=(False, False, True, True, False, False)
