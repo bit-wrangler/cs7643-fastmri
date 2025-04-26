@@ -26,6 +26,8 @@ if __name__ == '__main__':
 
     # data loader
     def _create_dataset(data_path,data_transform, data_partition, sequence, bs, shuffle, sample_rate=None, display=False):
+        # torch.cuda.empty_cache()
+
         sample_rate = sample_rate or args.sample_rate
         dataset = SliceData(
             root=data_path / data_partition,
@@ -44,7 +46,7 @@ if __name__ == '__main__':
         val_data_transform = DataTransform(args.resolution, args.challenge, mask, use_seed=True)
 
         if args.phase == 'test':
-            dataset_val = _create_dataset(path_dict[args.test_dataset]/args.sequence,val_data_transform, 'val', args.sequence, 8, False, 1.0)
+            dataset_val = _create_dataset(path_dict[args.test_dataset]/args.sequence,val_data_transform, 'val', args.sequence, args.bs, False, 1.0)
     else:
         exit('Error: unrecognized dataset')
 
@@ -61,7 +63,8 @@ if __name__ == '__main__':
 
     # copy weights
     if len(args.gpu) > 1:
-        net = torch.nn.DataParallel(net, args.gpu)
+        # net = torch.nn.DataParallel(net, args.gpu)
+        net = net.to(f"cuda:{args.gpu}")
 
     # training
     loss_train = []
