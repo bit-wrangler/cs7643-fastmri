@@ -299,7 +299,6 @@ class ReconFormer(nn.Module):
                  resi_connection ='1conv', mlp_ratio=2.,
                  use_checkpoint = (False,False,False,False,False,False)):
         super(ReconFormer, self).__init__()
-
         self.num_iter = num_iter
 
         self.block1 = TransBlock_UC(in_channels=in_channels, out_channels=out_channels, nf=num_ch[0],

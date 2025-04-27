@@ -360,9 +360,14 @@ class KspaceTrainer:
             augment=False
         )
 
+        # from torch.utils.data import Subset, DataLoader
+
+        # toy_train  = Subset(train_dataset, list(range(20)))
+
         # Create dataloaders
         train_loader = DataLoader(
             train_dataset,
+            # toy_train,
             batch_size=1,  # Process one file at a time
             shuffle=True,
             num_workers=self.config.get('num_workers', 4)
@@ -721,12 +726,15 @@ class KspaceTrainer:
             # self.run.log({"learning_rate": current_lr})
             self.run.log({'epoch': epoch + 1})
 
+            print("these are the losses:", val_loss, best_val_loss, val_loss < best_val_loss)
             # Save checkpoint if validation loss improved
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 self._save_checkpoint('best_model.pt', epoch, train_loss, val_loss, val_ssim, val_psnr)
                 print(f"Saved best model checkpoint with validation loss: {val_loss:.6f}, SSIM: {val_ssim:.6f}, PSNR: {val_psnr:.6f}")
 
+            print('check this', (epoch + 1) % self.config.get('save_checkpoint_every', 5))
+            
             # Save checkpoint every N epochs
             if (epoch + 1) % self.config.get('save_checkpoint_every', 5) == 0:
                 self._save_checkpoint(f'model_epoch_{epoch+1}.pt', epoch, train_loss, val_loss, val_ssim, val_psnr)

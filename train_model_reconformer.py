@@ -42,7 +42,7 @@ configs = [
         'reconformer_resi_connection': '1conv', # Type of residual connection
         'reconformer_mlp_ratio': 2.0,
         #!'reconformer_use_checkpoint': (False,) * 6, # Checkpointing for blocks
-        'reconformer_use_checkpoint': (True,) * 6, # Checkpointing for blocks
+        'reconformer_use_checkpoint': (False,) * 6, # Checkpointing for blocks
         
 
         # Training hyperparameters (kept mostly the same, adjust if needed)
@@ -66,61 +66,12 @@ configs = [
         'val_path': os.environ.get('SINGLECOIL_VAL_PATH'),
 
         # Checkpointing
-        'save_checkpoint_every': 5,
-        'checkpoint_dir': 'checkpoints_reconformer', # Changed checkpoint dir
+        'save_checkpoint_every': 1,
+        'checkpoint_dir': 'checkpoints', # Changed checkpoint dir
     },
 ]
 
-# configs = [
-#     {
-#         'tags': ['ReconFormer', 'small_model'],
-#         'notes': 'Lightweight ReconFormer for 8 GB GPU',
-#         # Data parameters
-#         'center_fractions': [0.04],
-#         'accelerations': [8],
-#         'seed': 42,
-#         'H': 192,                      # crop height
-#         'W': 192,                      # crop width
 
-#         # ReconFormer hyperparameters
-#         'reconformer_in_channels': 2,
-#         'reconformer_out_channels': 2,
-#         'reconformer_num_ch': (32, 16, 8),        # much smaller channel widths
-#         'reconformer_down_scales': (2, 1, 1.5),
-#         'reconformer_num_iter': 2,                # fewer recurrent iterations
-#         'reconformer_img_size': 192,              # match the crop size
-#         'reconformer_num_heads': (4, 4, 4),       # divides evenly into (32,16,8)
-#         'reconformer_depths': (3, 3, 3),          # fewer transformer layers
-#         'reconformer_window_sizes': (8, 8, 8),
-#         'reconformer_resi_connection': '1conv',
-#         'reconformer_mlp_ratio': 2.0,
-#         'reconformer_use_checkpoint': (True,) * 6,# enable gradient checkpointing
-
-#         # Training hyperparameters
-#         'batch_size': 1,
-#         'num_epochs': 250,
-#         'learning_rate': 1e-4,
-#         'weight_decay': 1e-5,
-#         'mse_weight': 1.0,
-#         'ssim_weight': 1000.0,
-#         'terminate_patience': 10,
-#         'use_l1': False,
-
-#         'scheduler': {
-#             'type': 'ReduceLROnPlateau',
-#             'factor': 0.5,
-#             'patience': 5,
-#         },
-
-#         # Paths (from .env)
-#         'train_path': os.environ.get('SINGLECOIL_TRAIN_PATH'),
-#         'val_path': os.environ.get('SINGLECOIL_VAL_PATH'),
-
-#         # Checkpointing
-#         'save_checkpoint_every': 5,
-#         'checkpoint_dir': 'checkpoints_reconformer',
-#     },
-# ]
 
 
 # Create checkpoint directory if it doesn't exist
@@ -169,6 +120,8 @@ def recon_former_forward(kspace, masked_kspace, mask, image, model):
 def train_model():
     for CONFIG in configs:
         # Initialize ReconFormer model with parameters from CONFIG
+        print(f"Initializing ReconFormer with parameters: {CONFIG}")
+        print(f"Using device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
         model = ReconFormer(
             in_channels=CONFIG['reconformer_in_channels'],
             out_channels=CONFIG['reconformer_out_channels'],
@@ -182,7 +135,12 @@ def train_model():
             resi_connection=CONFIG['reconformer_resi_connection'],
             mlp_ratio=CONFIG['reconformer_mlp_ratio'],
             use_checkpoint=CONFIG['reconformer_use_checkpoint']
-        )
+        ).to(device='cuda' if torch.cuda.is_available() else 'cpu')
+
+
+        # Check and print the device being used for the model
+        device = next(model.parameters()).device
+        print(f"Model is using device: {device}")
 
         
 
@@ -194,4 +152,5 @@ def train_model():
 
 
 if __name__ == "__main__":
+
     train_model()
