@@ -4,6 +4,8 @@ __pycache__/
 wandb/
 OCUCFormer-main-master/*
 checkpoints_sc/*
-ReconFormer-main/data/*
-ReconFormer-main/summary/*
+ReconFormer_main/data/*
+ReconFormer_main/summary/*
+ReconFormer_main/checkpoints/*
 *Zone.Identifier*
+*.pth

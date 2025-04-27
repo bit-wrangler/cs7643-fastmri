@@ -1,4 +1,4 @@
-name: recon
+name: recon_cuda
 channels:
   - pytorch
   - anaconda
@@ -135,4 +135,3 @@ dependencies:
     - threadpoolctl==2.1.0
     - timm==0.4.12
     - torchvision==0.4.2
-prefix: /home/pengfei/anaconda3/envs/recon

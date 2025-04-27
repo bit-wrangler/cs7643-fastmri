@@ -1,13 +1,13 @@
 ----------------- Options ---------------
                    F_path: /home/jschopme/dl/cs7643-fastmri/ReconFormer-main/data/	[default: ]
             accelerations: [4]                           
-                       bs: 4                             	[default: 16]
+                       bs: 1                             	[default: 2]
          center_fractions: [0.08]                        
                 challenge: singlecoil                    	[default: None]
                checkpoint:                               
                 continues: False                         
                    device: cuda:0                        	[default: None]
-                   epochs: 50                            
+                   epochs: 50                            	[default: 5]
                       gpu: [0]                           	[default: [0, 1]]
                        lr: 0.0002                        	[default: 0.0001]
                  lr_gamma: 0.9                           	[default: 0.1]
