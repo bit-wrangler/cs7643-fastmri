@@ -185,7 +185,7 @@ def main():
         exit('Error: unrecognized dataset')
 
     # create test DataLoader
-    
+     
 
     if not test_data_path.exists():
         raise FileNotFoundError(f"Data path not found: {test_data_path}")
@@ -237,6 +237,7 @@ def main():
 
 
     # run evaluation
+    print("Running evaluation...")
     net.eval()
     print("Running test_recon_save...")
     with torch.no_grad():
@@ -261,7 +262,8 @@ def main():
         print(f"Average SSIM loss: {avg_ssim}")
 
     # Log all metrics
-    to_log = {f"Test/{k}": v for k,v in metrics.items()}
+    metric_keys = ['val_loss', 'nmse', 'ssim', 'psnr']  # Define keys for the metrics tuple
+    to_log = {f"Test/{k}": v for k, v in zip(metric_keys, metrics)}
     wandb.log(to_log)
     wandb.run.summary.update(to_log)
     print("Logged to W&B:", to_log)
