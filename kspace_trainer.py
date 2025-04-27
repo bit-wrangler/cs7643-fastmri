@@ -16,8 +16,8 @@ import wandb
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Literal
-
-
+import math, random
+import torch.nn.functional as F
 
 def clipped_interp(x, w_min, w_max, x_min, x_max):
     x = np.asarray(x)
@@ -41,7 +41,7 @@ def meanstd_normalize(image, mean, std, eps=1e-6):
     return ((image - mean) / (std + eps)).clamp(-6, 6)
 
 class FastMRIDataset(Dataset):
-    def __init__(self, data_path, mask_func=None, target_size=None):
+    def __init__(self, data_path, mask_func=None, target_size=None, augment=False):
         """
         Initialize the FastMRI dataset.
 
@@ -54,6 +54,7 @@ class FastMRIDataset(Dataset):
         self.mask_func = mask_func
         self.target_size = target_size  # Target size for W and H dimensions
         self.file_list = glob.glob(os.path.join(data_path, '*.h5'))
+        self.augment = augment
         print(f"Found {len(self.file_list)} files in {data_path}")
 
     def __len__(self):
@@ -64,10 +65,39 @@ class FastMRIDataset(Dataset):
         with h5py.File(file_path, 'r') as hf:
             volume_kspace = hf['kspace'][()]
 
-            kspace = T.to_tensor(volume_kspace)
+            kspace = T.to_tensor(volume_kspace)    # (N, H, W, 2)
+
             if self.target_size is not None:
                 kspace = T.complex_center_crop(kspace, self.target_size)
 
+            # ---------------- image-domain aug -----------------
+            if self.augment:
+                img = fastmri.ifft2c(kspace).permute(0, 3, 1, 2) # (N, H, W, 2) -> (N, 2, H, W)
+
+                # +/-5 px translation
+                dx, dy = random.randint(-5, 5), random.randint(-5, 5)
+                img = torch.roll(img, shifts=(dy, dx), dims=(-2, -1))
+
+                # flip image horizontally
+                if random.random() < 0.5:
+                    img = torch.flip(img, dims=(-1,))
+
+                # +/-3° rotation
+                angle = random.uniform(-3.0, 3.0)
+                if abs(angle) > 1e-3:
+                    theta = torch.tensor([[ math.cos(math.radians(angle)), -math.sin(math.radians(angle)), 0],
+                                    [ math.sin(math.radians(angle)),  math.cos(math.radians(angle)), 0]],
+                                    dtype=img.dtype, device=img.device)
+                    grid = F.affine_grid(theta.unsqueeze(0).repeat(img.size(0),1,1),
+                                        img.size(), align_corners=False)
+                    img = F.grid_sample(img, grid, mode='bilinear',
+                                        padding_mode='zeros', align_corners=False)
+
+                kspace = fastmri.fft2c(img.permute(0, 2, 3, 1))
+                                  # back to (S,2,H,W)
+            # ---------------------------------------------------
+
+            # (re)-apply sampling mask **after** augmentation
             if self.mask_func is not None:
                 masked_kspace, mask, _ = T.apply_mask(kspace, self.mask_func)
             else:
@@ -130,6 +160,8 @@ def combined_loss(kspace_pred, kspace_target,pred_image_abs, target_image_abs, p
     """
     mse_loss, ssim_loss_val = image_losses(pred_image_abs, target_image_abs, use_l1=use_l1)
     psnr_loss_val = psnr_loss(pred_image_abs, target_image_abs)
+    # psnr_loss_val = psnr_loss(kspace_pred, kspace_target)
+
     if kspace_pred is not None:
         k_loss = nn.L1Loss()(kspace_pred, kspace_target)
 
@@ -198,6 +230,7 @@ class KspaceTrainer:
         self.model = model
         self.forward_func = forward_func
 
+
         self.plot_idx = None
         self.plot_file = None
 
@@ -205,6 +238,7 @@ class KspaceTrainer:
 
         # Set device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.scaler = torch.amp.GradScaler(enabled=self.device.type == "cuda")
         print(f"Using device: {self.device}")
 
         # Move model to device
@@ -300,13 +334,15 @@ class KspaceTrainer:
         train_dataset = FastMRIDataset(
             self.config['train_path'],
             self.train_mask_func,
-            target_size=target_size
+            target_size=target_size,
+            augment=self.config.get('augment', False)
         )
 
         val_dataset = FastMRIDataset(
             self.config['val_path'],
             self.val_mask_func,
-            target_size=target_size
+            target_size=target_size,
+            augment=False
         )
 
         # Create dataloaders
@@ -425,39 +461,45 @@ class KspaceTrainer:
             self.optimizer.zero_grad()
 
             # Forward pass - returns image domain prediction
-            k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
-            # if normalization['type'] == 'max':
-            #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
-            # elif normalization['type'] == 'meanstd':
-            #     pred_image_abs = meanstd_normalize(pred_image_abs, normalization['mean'], normalization['std'], eps=1e-6)
+            with torch.amp.autocast(self.device.type):
+                k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
+                # if normalization['type'] == 'max':
+                #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
+                # elif normalization['type'] == 'meanstd':
+                #     pred_image_abs = meanstd_normalize(pred_image_abs, normalization['mean'], normalization['std'], eps=1e-6)
 
-            # Convert target kspace to image domain
-            target_image_abs = target
+                # Convert target kspace to image domain
+                target_image_abs = target
 
-            use_l1 = self.use_l1
+                use_l1 = self.use_l1
 
-            # Calculate loss
-            loss, mse_loss, ssim_loss_val, psnr_loss_val = combined_loss(
-                k_space_pred,
-                kspace,
-                pred_image_abs,
-                target_image_abs,
-                self.psnr_loss,
-                ave_mse=prev_ave_mse,
-                mse_weight=self.config.get('mse_weight', 1.0),
-                ssim_weight=self.config.get('ssim_weight', 1000.0),
-                psnr_weight=self.config.get('psnr_weight', 1.0),
-                use_l1=use_l1
-            )
+                # Calculate loss
+                loss, mse_loss, ssim_loss_val, psnr_loss_val = combined_loss(
+                    k_space_pred,
+                    kspace,
+                    pred_image_abs,
+                    target_image_abs,
+                    self.psnr_loss,
+                    ave_mse=prev_ave_mse,
+                    mse_weight=self.config.get('mse_weight', 1.0),
+                    ssim_weight=self.config.get('ssim_weight', 1000.0),
+                    psnr_weight=self.config.get('psnr_weight', 1.0),
+                    use_l1=use_l1
+                )
 
             # Scale factor (for compatibility with original code)
             scale_factor = 1.0
             loss = loss * scale_factor
 
             # Backward pass and optimize
-            loss.backward()
+            # loss.backward()
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.get('max_norm', 1.0))
-            self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad(set_to_none=True)
+            # self.optimizer.step()
 
             # Update running losses - multiply by number of slices to calculate per-slice average later
             running_loss += (loss.item() / scale_factor) * n_slices  # Unscale for reporting
@@ -522,30 +564,31 @@ class KspaceTrainer:
                 total_slices += n_slices
 
                 # Forward pass - returns image domain prediction
-                k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
+                with torch.amp.autocast(self.device.type):
+                    k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
                 # elif normalization['type'] == 'meanstd':
                 #     pred_image_abs = meanstd_normalize(pred_image_abs, normalization['mean'], normalization['std'], eps=1e-6)
 
-                # Convert target kspace to image domain
-                target_image_abs = target
+                    # Convert target kspace to image domain
+                    target_image_abs = target
 
-                use_l1 = self.use_l1
+                    use_l1 = self.use_l1
 
-                # Calculate loss
-                loss, mse_loss, ssim_loss_val, psnr_loss_val = combined_loss(
-                    k_space_pred,
-                    kspace,
-                    pred_image_abs,
-                    target_image_abs,
-                    self.psnr_loss,
-                    ave_mse=prev_ave_mse,
-                    mse_weight=self.config.get('mse_weight', 1.0),
-                    ssim_weight=self.config.get('ssim_weight', 1000.0),
-                    psnr_weight=self.config.get('psnr_weight', 1.0),
-                    use_l1=use_l1
-                )
+                    # Calculate loss
+                    loss, mse_loss, ssim_loss_val, psnr_loss_val = combined_loss(
+                        k_space_pred,
+                        kspace,
+                        pred_image_abs,
+                        target_image_abs,
+                        self.psnr_loss,
+                        ave_mse=prev_ave_mse,
+                        mse_weight=self.config.get('mse_weight', 1.0),
+                        ssim_weight=self.config.get('ssim_weight', 1000.0),
+                        psnr_weight=self.config.get('psnr_weight', 1.0),
+                        use_l1=use_l1
+                    )
 
                 # Convert to numpy for SSIM and PSNR calculation
                 pred_image_abs_np = pred_image_abs.cpu().numpy()
@@ -608,9 +651,9 @@ class KspaceTrainer:
             "val_ssim_loss": avg_ssim_loss,
             "val_psnr_loss": avg_psnr_loss,
             "val_ssim": avg_ssim.item(),
-            "val_zf_ssim": avg_zf_ssim.item(),
+            "val_ssim_gain": avg_ssim.item()-avg_zf_ssim.item(),
             "val_psnr": avg_psnr.item(),
-            "val_zf_psnr": avg_zf_psnr.item()
+            "val_psnr_gain": avg_psnr.item()-avg_zf_psnr.item()
         }, commit=False)
 
         return avg_loss, avg_mse_loss, avg_ssim_loss, avg_ssim.item(), avg_psnr.item(), avg_zf_ssim.item(), avg_zf_psnr.item()
@@ -648,6 +691,7 @@ class KspaceTrainer:
                 early_stopping.best_loss = None
                 if type(self.scheduler) == optim.lr_scheduler.ReduceLROnPlateau:
                     self.scheduler.num_bad_epochs = 0
+                    self.scheduler.best = 1e6
 
             # Update learning rate
             if type(self.scheduler) == optim.lr_scheduler.ReduceLROnPlateau:
@@ -679,6 +723,7 @@ class KspaceTrainer:
                 early_stopping.best_loss = None
                 if type(self.scheduler) == optim.lr_scheduler.ReduceLROnPlateau:
                     self.scheduler.num_bad_epochs = 0
+                    self.scheduler.best = 1e6
 
             if early_stopping(val_loss):
                 print(f"Early stopping triggered, stopping training. Best val loss: {best_val_loss:.6f}")

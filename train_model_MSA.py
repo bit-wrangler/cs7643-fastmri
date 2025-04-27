@@ -2,7 +2,7 @@ import dotenv
 import os
 import torch
 import fastmri
-from models.singlecoil_kspace_columnwise_masked_transformer_denoiser import SingleCoilKspaceColumnwiseMaskedTransformerDenoiser
+from models.spectral_autoencoder import MaskedSpectralAutoencoder
 from kspace_trainer import KspaceTrainer
 
 # Load environment variables
@@ -24,17 +24,10 @@ configs = [
 
     # Model hyperparameters
     'model': {
-        'encoder_num_heads': 32,
-        'decoder_num_heads': 32,
-        'pre_dims': 256,
-        'kernel_size': 5,
-        'pre_layers': 0,
-        'hidden_size': 256,
-        'activation': 'relu',
+        'mask_pos_c': 4,
         'H': 320,
         'W': 320,
-        'apply_pre_norm': False,
-        'apply_dc': True,
+        'latent_dim': 1024,
     },
 
     # Training hyperparameters
@@ -82,7 +75,7 @@ os.makedirs(configs[0]['checkpoint_dir'], exist_ok=True)
 def train_model():
     for CONFIG in configs:
         # Initialize model with parameters from CONFIG
-        model = SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(
+        model = MaskedSpectralAutoencoder(
             **CONFIG['model']
         )
 
@@ -93,7 +86,7 @@ def train_model():
         # Create trainer instance with a forward_func that returns image domain predictions
         def forward_func(kspace, masked_kspace, mask, image, model):
             # Get kspace prediction from model
-            kspace_pred = model(kspace, mask)
+            kspace_pred = model(masked_kspace, mask)
 
             # Convert to image domain
             kspace_pred_permuted = kspace_pred.permute(0, 2, 3, 1)

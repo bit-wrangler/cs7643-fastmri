@@ -2,7 +2,7 @@ import dotenv
 import os
 import torch
 import fastmri
-from models.singlecoil_kspace_columnwise_masked_transformer_denoiser import SingleCoilKspaceColumnwiseMaskedTransformerDenoiser
+from models.test_model_1 import KspaceAutoencoder
 from kspace_trainer import KspaceTrainer
 
 # Load environment variables
@@ -11,8 +11,8 @@ dotenv.load_dotenv()
 # Training and model hyperparameters
 configs = [
     {
-    'tags': ['transformer1', 'updated_trainer_4'], # ['transformer1', 'loss', 'psnr']
-    'notes': 'control4 - max normalization', # 'control'
+    'tags': ['transformer2', 'updated_trainer_4'], # ['transformer1', 'loss', 'psnr']
+    'notes': 'another encoder test', # 'control'
     # Data parameters
     'val_center_fractions': [0.04],
     'val_accelerations': [8],
@@ -24,17 +24,12 @@ configs = [
 
     # Model hyperparameters
     'model': {
-        'encoder_num_heads': 32,
-        'decoder_num_heads': 32,
-        'pre_dims': 256,
-        'kernel_size': 5,
-        'pre_layers': 0,
-        'hidden_size': 256,
-        'activation': 'relu',
         'H': 320,
         'W': 320,
-        'apply_pre_norm': False,
-        'apply_dc': True,
+        'embed_dim': 32,
+        'embedding_block_depths': (2, 2),
+        'enc_layers': 4,
+        'enc_heads': 8,
     },
 
     # Training hyperparameters
@@ -82,7 +77,7 @@ os.makedirs(configs[0]['checkpoint_dir'], exist_ok=True)
 def train_model():
     for CONFIG in configs:
         # Initialize model with parameters from CONFIG
-        model = SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(
+        model = KspaceAutoencoder(
             **CONFIG['model']
         )
 
@@ -93,7 +88,8 @@ def train_model():
         # Create trainer instance with a forward_func that returns image domain predictions
         def forward_func(kspace, masked_kspace, mask, image, model):
             # Get kspace prediction from model
-            kspace_pred = model(kspace, mask)
+            kspace_pred = model(masked_kspace, mask)
+                # out = model(masked_kspace, col_mask)           # (N, 2, H, W)
 
             # Convert to image domain
             kspace_pred_permuted = kspace_pred.permute(0, 2, 3, 1)

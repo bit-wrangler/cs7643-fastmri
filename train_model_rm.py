@@ -2,8 +2,11 @@ import dotenv
 import os
 import torch
 import fastmri
-from models.singlecoil_kspace_columnwise_masked_transformer_denoiser import SingleCoilKspaceColumnwiseMaskedTransformerDenoiser
+from models.sc_knee_image_rm import RM1
 from kspace_trainer import KspaceTrainer
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32  = True
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -82,9 +85,7 @@ os.makedirs(configs[0]['checkpoint_dir'], exist_ok=True)
 def train_model():
     for CONFIG in configs:
         # Initialize model with parameters from CONFIG
-        model = SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(
-            **CONFIG['model']
-        )
+        model = RM1()
 
         total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f'{total_params:,} parameters')          # human‑readable with commas
@@ -93,14 +94,10 @@ def train_model():
         # Create trainer instance with a forward_func that returns image domain predictions
         def forward_func(kspace, masked_kspace, mask, image, model):
             # Get kspace prediction from model
-            kspace_pred = model(kspace, mask)
+            pred_image_abs = model(masked_kspace, mask)
 
-            # Convert to image domain
-            kspace_pred_permuted = kspace_pred.permute(0, 2, 3, 1)
-            pred_image = fastmri.ifft2c(kspace_pred_permuted)
-            pred_image_abs = fastmri.complex_abs(pred_image)
 
-            return kspace_pred, pred_image_abs
+            return None, pred_image_abs
 
         trainer = KspaceTrainer(CONFIG, model, forward_func=forward_func)
 
