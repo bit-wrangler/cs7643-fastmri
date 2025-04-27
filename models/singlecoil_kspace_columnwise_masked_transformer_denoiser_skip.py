@@ -25,6 +25,23 @@ The decoder output is then passed through a post_conv to reduce the number of ch
 
 """
 
+def create_activation(activation):
+    if activation == 'relu':
+        return nn.ReLU()
+    elif activation == 'gelu':
+        return nn.GELU()
+    else:
+        raise ValueError(f'Unknown activation: {activation}')
+
+class Residual(nn.Module):
+    def __init__(self, layers, activation: str = 'gelu'):
+        super().__init__()
+        self.layers = layers
+        self.activation = create_activation(activation)
+
+    def forward(self, x):
+        return self.activation(x + self.layers(x))
+
 class PointwiseConstantChannel1DResNet(nn.Module):
     def __init__(
         self,
@@ -71,7 +88,6 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
             H: int = 320,
             W: int = 320,
             apply_pre_norm: bool = False,
-            apply_dc: bool = False,
     ):
         super().__init__()
         self.encoder_num_heads = encoder_num_heads
@@ -83,10 +99,11 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         self.H = H
         self.W = W
         self.apply_pre_norm = apply_pre_norm
-        self.apply_dc = apply_dc
 
         # pointwise conv to go from kspace (2*H channels) to pre_dims channels
         self.pre_conv = nn.Conv1d(2*H, pre_dims, kernel_size=1)
+
+        self.mask_embedding = nn.Embedding(2, hidden_size)
 
         if apply_pre_norm:
             self.pre_norm = nn.BatchNorm1d(self.pre_dims, eps=1e-6)
@@ -109,21 +126,43 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
             self.pre_conv_project = nn.Identity()
 
         # encoder
-        self.encoder = nn.MultiheadAttention(
-            hidden_size,
-            encoder_num_heads,
-            batch_first=True,
+        # self.encoder = nn.MultiheadAttention(
+        #     hidden_size,
+        #     encoder_num_heads,
+        #     batch_first=True,
+        # )
+        self.encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                hidden_size,
+                encoder_num_heads,
+                batch_first=True,
+            ),
+            1,
         )
 
         # decoder
-        self.decoder = nn.MultiheadAttention(
-            hidden_size,
-            decoder_num_heads,
-            batch_first=True,
+        # self.decoder = nn.MultiheadAttention(
+        #     hidden_size,
+        #     decoder_num_heads,
+        #     batch_first=True,
+        # )
+        self.decoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                hidden_size,
+                decoder_num_heads,
+                batch_first=True,
+            ),
+            1,
         )
 
         # decoder input position embedding
         self.decoder_input_position_embedding = nn.Embedding(W, hidden_size)
+
+        # self.post_conv0 = nn.Sequential(
+        #     nn.Conv1d(hidden_size, hidden_size, kernel_size=1),
+        #     nn.BatchNorm1d(hidden_size),
+        #     nn.ReLU(),
+        # )
 
         # post_conv to go from hidden_size channels to kspace (2*H channels)
         self.post_conv = nn.Conv1d(hidden_size, 2*H, kernel_size=1)
@@ -131,22 +170,38 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         # masked token of shape (hidden_size)
         self.masked_token = nn.Parameter(torch.randn(hidden_size))
 
-    def forward(self, kspace, col_mask):
+    def forward(self, masked_kspace, col_mask, filter_masked: bool = True):
         # kspace is of shape (n_slices, 2, H, W)
         # mask is of shape (W)
-        n_slices = kspace.shape[0]
-        H = kspace.shape[2]
-        W = kspace.shape[3]
+        n_slices = masked_kspace.shape[0]
+        H = masked_kspace.shape[2]
+        W = masked_kspace.shape[3]
         M = col_mask.sum()
+        M_d = M
+
+        if not filter_masked:
+            M = W
 
         # create position tensor of shape (1, 1, W)
-        position = torch.arange(W).unsqueeze(0).unsqueeze(0).to(kspace.device)
+        position = torch.arange(W).unsqueeze(0).unsqueeze(0).to(masked_kspace.device)
+
+        mask_ids = col_mask.squeeze().long() # (W,)
+        mask_embedding = self.mask_embedding(mask_ids) # (W, hidden_size)
+        mask_embedding = mask_embedding.t() # (hidden_size, W)
+        mask_embedding = mask_embedding.unsqueeze(0).repeat(n_slices, 1, 1) # (n_slices, hidden_size, W)
+
+        if filter_masked:
+            cols = col_mask.squeeze()
+        else:
+            cols = torch.ones(W, dtype=torch.bool, device=masked_kspace.device)
+
+        mask_embedding = mask_embedding[:, :, cols]
 
         # copy non-masked columns of position tensor to new tensor of shape (1, 1, M)
-        filtered_positions = position[:, :, col_mask.squeeze()]
+        filtered_positions = position[:, :, cols]
 
         # copy non-masked columns of kspace to new tensor of shape (n_slices, 2, H, M)
-        filtered_kspace = kspace[:, :, :, col_mask.squeeze()]
+        filtered_kspace = masked_kspace[:, :, :, cols]
 
         # flatten filtered kspace to shape (n_slices, 2*H, M)
         filtered_kspace = filtered_kspace.reshape(n_slices, 2*H, M)
@@ -173,23 +228,32 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         pre_conv = pre_conv.permute(0, 2, 1) # (n_slices, hidden_size, M) -> (n_slices, M, hidden_size)
 
         # encoder n_slices(batch_size), M (seq_len), hidden_size (embed_dim)
-        encoder_output = self.encoder(pre_conv, pre_conv, pre_conv)[0]
+        # encoder_output = self.encoder(pre_conv, pre_conv, pre_conv)[0]
+        encoder_output = self.encoder(pre_conv)
 
         # decoder input n_slices(batch_size), M (seq_len), hidden_size (embed_dim)
-        decoder_input = torch.zeros(n_slices, W, self.hidden_size).to(kspace.device) # (n_slices, W, hidden_size)
-        decoder_input[:, col_mask.squeeze()] = encoder_output
+        decoder_input = torch.zeros(n_slices, W, self.hidden_size).to(masked_kspace.device) # (n_slices, W, hidden_size)
+        if filter_masked:
+            decoder_input[:, col_mask.squeeze()] = encoder_output
+        else:
+            decoder_input[:, col_mask.squeeze()] = encoder_output[:, col_mask.squeeze()]
+        # decoder_input[:, col_mask.squeeze()] = encoder_output
         # self.masked_token is (hidden_size)
-        masked_tokens = self.masked_token.unsqueeze(0).unsqueeze(0).repeat(n_slices, W - M, 1) # (n_slices, W - M, hidden_size)
-        decoder_input[:, ~col_mask.squeeze()] = masked_tokens
+        if filter_masked:
+            masked_tokens = self.masked_token.unsqueeze(0).unsqueeze(0).repeat(n_slices, W - M_d, 1) # (n_slices, W - M, hidden_size)
+            decoder_input[:, ~col_mask.squeeze()] = masked_tokens
 
-        decoder_input_position_embedding = self.decoder_input_position_embedding(position) # (1, 1, W, hidden_size)
-        decoder_input_position_embedding = decoder_input_position_embedding.repeat(n_slices, 1, 1, 1) # (n_slices, 1, W, hidden_size)
-        decoder_input_position_embedding = decoder_input_position_embedding.squeeze(1)#.permute(0, 2, 1) # (n_slices, W, hidden_size)
-        decoder_input = decoder_input + decoder_input_position_embedding
+            decoder_input_position_embedding = self.decoder_input_position_embedding(position) # (1, 1, W, hidden_size)
+            decoder_input_position_embedding = decoder_input_position_embedding.repeat(n_slices, 1, 1, 1) # (n_slices, 1, W, hidden_size)
+            decoder_input_position_embedding = decoder_input_position_embedding.squeeze(1)#.permute(0, 2, 1) # (n_slices, W, hidden_size)
+            decoder_input[:, ~col_mask.squeeze()] = decoder_input[:, ~col_mask.squeeze()] + decoder_input_position_embedding[:, ~col_mask.squeeze()]
 
-        decoder_output = self.decoder(decoder_input, decoder_input, decoder_input)[0] # (n_slices, W, hidden_size) -> (n_slices, W, hidden_size)
+        # decoder_output = self.decoder(decoder_input, decoder_input, decoder_input)[0] # (n_slices, W, hidden_size) -> (n_slices, W, hidden_size)
+        decoder_output = self.decoder(decoder_input)
 
         decoder_output = decoder_output.permute(0, 2, 1) # (n_slices, hidden_size, W)
+
+        # decoder_output = self.post_conv0(decoder_output)
 
         output_masked = self.post_conv(decoder_output) # (n_slices, hidden_size, W) -> (n_slices, 2*H, W)
         output_masked = output_masked.reshape(n_slices, 2, H, W) # (n_slices, 2*H, W) -> (n_slices, 2, H, W)
@@ -198,10 +262,27 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         # output[:, :, :, ~mask.squeeze()] = output_masked[:, :, :, ~mask.squeeze()]
         # output[:, :, :, mask.squeeze()] = kspace[:, :, :, mask.squeeze()]
 
-        if self.apply_dc:
-            mask4d  = col_mask.view(1, 1, 1, W)
-            output = mask4d * kspace + (~mask4d) * output_masked
-        else:
-            output = output_masked
+        output = output_masked
 
         return output
+    
+
+class Skippy(nn.Module):
+    def __init__(self, model: SingleCoilKspaceColumnwiseMaskedTransformerDenoiser, activation='gelu', n_iters=2):
+        super().__init__()
+        self.net = model
+        self.n_iters = n_iters
+
+    def _data_consistency(self, kspace, mask4d, kspace_pred):
+        return mask4d * kspace + (1-mask4d) * kspace_pred
+
+    # pass all args to net
+    def forward(self, masked_kspace, mask):
+        mask4d  = mask.view(1, 1, 1, mask.shape[-1]).long()
+        x = masked_kspace
+        x = self.net(x, mask)
+        for i in range(self.n_iters-1):
+            x = self._data_consistency(masked_kspace, mask4d, x)
+            x = self.net(x, mask, filter_masked=False)
+        x = self._data_consistency(masked_kspace, mask4d, x)
+        return x

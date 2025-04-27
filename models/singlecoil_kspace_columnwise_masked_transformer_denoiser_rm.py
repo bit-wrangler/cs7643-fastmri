@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import fastmri
+from models.test_model_1 import ConvMixerStack, UnConvMixerStack, PatchEmbedding, UnPatchEmbedding
 
 """
 The columnwise masked transformer denoiser for singlecoil kspace data.
@@ -57,6 +59,20 @@ class PointwiseConstantChannel1DResNet(nn.Module):
 
     def forward(self, x):
         return self.activation(x + self.layers(x))
+
+class IFFT(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return fastmri.ifft2c(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+    
+class FFT(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return fastmri.fft2c(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
 class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
     def __init__(
@@ -125,8 +141,23 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         # decoder input position embedding
         self.decoder_input_position_embedding = nn.Embedding(W, hidden_size)
 
+        # self.post_conv0 = nn.Sequential(
+        #     nn.Conv1d(hidden_size, hidden_size, kernel_size=1),
+        #     nn.BatchNorm1d(hidden_size),
+        #     nn.ReLU(),
+        # )
+
         # post_conv to go from hidden_size channels to kspace (2*H channels)
         self.post_conv = nn.Conv1d(hidden_size, 2*H, kernel_size=1)
+
+        self.rm = nn.Sequential(
+            IFFT(),
+            PatchEmbedding(2, 16, patch_size=16),
+            ConvMixerStack(16, 4, kernel_size=9),
+            UnConvMixerStack(16, 4, kernel_size=9),
+            UnPatchEmbedding(16, 2, patch_size=16),
+            FFT(),
+        )
         
         # masked token of shape (hidden_size)
         self.masked_token = nn.Parameter(torch.randn(hidden_size))
@@ -185,11 +216,13 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
         decoder_input_position_embedding = self.decoder_input_position_embedding(position) # (1, 1, W, hidden_size)
         decoder_input_position_embedding = decoder_input_position_embedding.repeat(n_slices, 1, 1, 1) # (n_slices, 1, W, hidden_size)
         decoder_input_position_embedding = decoder_input_position_embedding.squeeze(1)#.permute(0, 2, 1) # (n_slices, W, hidden_size)
-        decoder_input = decoder_input + decoder_input_position_embedding
+        decoder_input[:, ~col_mask.squeeze()]  = decoder_input[:, ~col_mask.squeeze()]  + decoder_input_position_embedding[:, ~col_mask.squeeze()]
 
         decoder_output = self.decoder(decoder_input, decoder_input, decoder_input)[0] # (n_slices, W, hidden_size) -> (n_slices, W, hidden_size)
 
         decoder_output = decoder_output.permute(0, 2, 1) # (n_slices, hidden_size, W)
+
+        # decoder_output = self.post_conv0(decoder_output)
 
         output_masked = self.post_conv(decoder_output) # (n_slices, hidden_size, W) -> (n_slices, 2*H, W)
         output_masked = output_masked.reshape(n_slices, 2, H, W) # (n_slices, 2*H, W) -> (n_slices, 2, H, W)
@@ -203,5 +236,10 @@ class SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(nn.Module):
             output = mask4d * kspace + (~mask4d) * output_masked
         else:
             output = output_masked
+
+        output = self.rm(output)
+
+        if self.apply_dc:
+            output = mask4d * kspace + (~mask4d) * output
 
         return output

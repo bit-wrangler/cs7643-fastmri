@@ -3,7 +3,7 @@ import os
 import torch
 import fastmri
 from models.singlecoil_kspace_columnwise_masked_transformer_denoiser import SingleCoilKspaceColumnwiseMaskedTransformerDenoiser
-from kspace_trainer import KspaceTrainer
+from kspace_trainer_gan import KspaceTrainerGAN
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -11,8 +11,8 @@ dotenv.load_dotenv()
 # Training and model hyperparameters
 configs = [
     {
-    'tags': ['transformer1', 'updated_trainer_4'], # ['transformer1', 'loss', 'psnr']
-    'notes': 'control4 - max normalization', # 'control'
+    'tags': ['transformer1', 'gan'], # ['transformer1', 'loss', 'psnr']
+    'notes': 'gan test', # 'control'
     # Data parameters
     'val_center_fractions': [0.04],
     'val_accelerations': [8],
@@ -22,10 +22,11 @@ configs = [
     'H': 320,
     'W': 320,
 
+
     # Model hyperparameters
     'model': {
-        'encoder_num_heads': 32,
-        'decoder_num_heads': 32,
+        'encoder_num_heads': 8,
+        'decoder_num_heads': 4,
         'pre_dims': 256,
         'kernel_size': 5,
         'pre_layers': 0,
@@ -34,7 +35,14 @@ configs = [
         'H': 320,
         'W': 320,
         'apply_pre_norm': False,
-        'apply_dc': True,
+    },
+
+    'discriminator': {
+        'in_ch': 1,
+        'dim': 64,
+        'patch': 16,
+        'ksize': 9,
+        'depth': 8,
     },
 
     # Training hyperparameters
@@ -43,18 +51,19 @@ configs = [
     'learning_rate': 1e-4,
     'weight_decay': 1e-5,
     'mse_weight': 1.,
-    'ssim_weight': 1.,
-    'psnr_weight': 0.1,
-    'terminate_patience': 12,
-    'use_l1': True,
-    'l1_transition_mse': 0.02,
+    'ssim_weight': 1000.,
+    'terminate_patience': 10,
+    'use_l1': False,
     'max_norm': 10.0,
-    'normalization': 'max',
+    'adv_weight'   : 0.01,
+    'd_lr'         : 1e-4,
+    'gan_start_recon_loss': 501.0,
+    'clamp_predicted': False,
 
     'scheduler': {
         'type': 'ReduceLROnPlateau',
         'factor': 0.5,
-        'patience': 6,
+        'patience': 5,
     },
 
     # 'scheduler': {
@@ -100,9 +109,9 @@ def train_model():
             pred_image = fastmri.ifft2c(kspace_pred_permuted)
             pred_image_abs = fastmri.complex_abs(pred_image)
 
-            return kspace_pred, pred_image_abs
+            return pred_image_abs
 
-        trainer = KspaceTrainer(CONFIG, model, forward_func=forward_func)
+        trainer = KspaceTrainerGAN(CONFIG, model, forward_func=forward_func)
 
         # Start training
         trainer.train()

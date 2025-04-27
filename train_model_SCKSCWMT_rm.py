@@ -2,7 +2,7 @@ import dotenv
 import os
 import torch
 import fastmri
-from models.singlecoil_kspace_columnwise_masked_transformer_denoiser import SingleCoilKspaceColumnwiseMaskedTransformerDenoiser
+from models.singlecoil_kspace_columnwise_masked_transformer_denoiser_rm import SingleCoilKspaceColumnwiseMaskedTransformerDenoiser
 from kspace_trainer import KspaceTrainer
 
 # Load environment variables
