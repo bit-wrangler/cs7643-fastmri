@@ -15,9 +15,13 @@ from psnr_loss import PSNRLoss
 import wandb
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import Literal
 import math, random
 import torch.nn.functional as F
+
+# downgraded to torch 1.12.0
+from torch.cuda import amp
+
+
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32  = True
@@ -101,15 +105,22 @@ class FastMRIDataset(Dataset):
             # ---------------------------------------------------
 
             # (re)-apply sampling mask **after** augmentation
+            # if self.mask_func is not None:
+            #     masked_kspace, mask, _ = T.apply_mask(kspace, self.mask_func)
+            # else:
+            #     masked_kspace, mask = kspace, torch.ones_like(kspace[..., :1])
+
+            # adjusting mask
             if self.mask_func is not None:
-                masked_kspace, mask, _ = T.apply_mask(kspace, self.mask_func)
+                masked_kspace, mask = T.apply_mask(kspace, self.mask_func)
             else:
                 masked_kspace, mask = kspace, torch.ones_like(kspace[..., :1])
 
             kspace = kspace.permute(0, 3, 1, 2)
             masked_kspace = masked_kspace.permute(0, 3, 1, 2)
 
-            mask = mask.to(torch.bool).squeeze()  
+            # Bring the mask’s singleton channel back in front: (N, H, W, 1) → (N, 1, H, W)
+            mask = mask.permute(0, 3, 1, 2).to(torch.bool)
 
             return {
                 'kspace': kspace,
@@ -241,7 +252,8 @@ class KspaceTrainer:
 
         # Set device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.scaler = torch.amp.GradScaler(enabled=self.device.type == "cuda")
+        self.scaler = amp.GradScaler(enabled=(self.device.type == "cuda"))
+        # self.scaler = torch.amp.GradScaler(enabled=self.device.type == "cuda")
         print(f"Using device: {self.device}")
 
         # Move model to device
@@ -274,13 +286,13 @@ class KspaceTrainer:
         self.val_mask_func = RandomMaskFunc(
             center_fractions=self.config.get('val_center_fractions', [0.04]),
             accelerations=self.config.get('val_accelerations', [8]),
-            seed=self.config.get('seed', 42)
+            # seed=self.config.get('seed', 42)
         )
 
         self.train_mask_func = RandomMaskFunc(
             center_fractions=self.config.get('train_center_fractions', [0.04]),
             accelerations=self.config.get('train_accelerations', [8]),
-            seed=self.config.get('seed', 42)
+            # seed=self.config.get('seed', 42)
         )
 
         # Create checkpoint directory if it doesn't exist
@@ -365,7 +377,7 @@ class KspaceTrainer:
 
         return train_loader, val_loader
 
-    def _process_batch(self, batch, norm:Literal['max','meanstd']):
+    def _process_batch(self, batch, norm):
         """Process a batch and return kspace, masked_kspace, and mask tensors."""
         # {
         #     'kspace': kspace,
@@ -434,7 +446,7 @@ class KspaceTrainer:
 
         return k_space_pred, pred_image_abs
 
-    def train_epoch(self, dataloader, epoch, prev_ave_mse, norm:Literal['max','meanstd']='max'):
+    def train_epoch(self, dataloader, epoch, prev_ave_mse, norm='max'):
         """Train for one epoch."""
         self.model.train()
         running_loss = 0.0
@@ -464,7 +476,7 @@ class KspaceTrainer:
             self.optimizer.zero_grad()
 
             # Forward pass - returns image domain prediction
-            with torch.amp.autocast(self.device.type):
+            with amp.autocast(enabled=(self.device.type == "cuda")):
                 k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
@@ -544,7 +556,7 @@ class KspaceTrainer:
 
         return avg_loss, avg_mse_loss, avg_ssim_loss
 
-    def validate(self, dataloader, prev_ave_mse, norm:Literal['max','meanstd']='max', plot=False):
+    def validate(self, dataloader, prev_ave_mse, norm='max', plot=False):
         """Validate the model."""
         self.model.eval()
         running_loss = 0.0
@@ -567,7 +579,7 @@ class KspaceTrainer:
                 total_slices += n_slices
 
                 # Forward pass - returns image domain prediction
-                with torch.amp.autocast(self.device.type):
+                with amp.autocast(enabled=(self.device.type == "cuda")):
                     k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])

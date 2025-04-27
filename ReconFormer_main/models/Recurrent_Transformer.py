@@ -9,7 +9,32 @@ from ReconFormer_main.data import transforms
 from ReconFormer_main.models.RS_attention import RPTL, PatchEmbed, PatchUnEmbed
 from torch.nn import functional as F
 import numpy as np
+import fastmri
 
+class IFFT(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        with torch.amp.autocast(x.device.type, enabled=False):
+            x = x.float()
+            img = fastmri.ifft2c(x.permute(0, 2, 3, 1))
+        return img.permute(0, 3, 1, 2)
+    
+class FFT(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        with torch.amp.autocast(x.device.type, enabled=False):
+            x = x.float()
+            k = fastmri.fft2c(x.permute(0, 2, 3, 1))
+        return k.permute(0, 3, 1, 2)
+    
+
+fft_op = FFT()
+ifft_op = IFFT()
+    
 class DataConsistencyInKspace(nn.Module):
     """ Create data consistency operator
 
@@ -32,8 +57,9 @@ class DataConsistencyInKspace(nn.Module):
         mask - corresponding nonzero location
         """
 
-        out = (1 - mask) * k + mask * k0
-        return out
+        # out = (1 - mask) * k + mask * k0
+        # return out
+        return torch.where(mask, k0, k)
 
     def perform(self, x, k0, mask):
         """
@@ -41,16 +67,25 @@ class DataConsistencyInKspace(nn.Module):
         k0   - initially sampled elements in k-space
         mask - corresponding nonzero location
         """
-        x = x.permute(0, 2, 3, 1)
-        k0 = k0.permute(0, 2, 3, 1)
-        mask = mask.permute(0, 2, 3, 1)
+        # x = x.permute(0, 2, 3, 1)
+        # k0 = k0.permute(0, 2, 3, 1)
+        # mask = mask.permute(0, 2, 3, 1)
 
-        k = transforms.fft2(x)
+        # k = transforms.fft2(x)
 
-        out = self.data_consistency(k, k0, mask)
-        x_res = transforms.ifft2(out)
+        # out = self.data_consistency(k, k0, mask)
+        # x_res = transforms.ifft2(out)
 
-        x_res = x_res.permute(0, 3, 1, 2)
+        # x_res = x_res.permute(0, 3, 1, 2)
+        k = fft_op(x) # Pass channel-first input directly
+
+        k_ch_last = k.permute(0, 2, 3, 1)
+        k0_ch_last = k0.permute(0, 2, 3, 1)
+        mask_ch_last = mask.permute(0, 2, 3, 1)
+        out_ch_last = self.data_consistency(k_ch_last, k0_ch_last, mask_ch_last)
+
+        out_ch_first = out_ch_last.permute(0, 3, 1, 2)
+        x_res = ifft_op(out_ch_first) # Returns channel-first (N, C, H, W)
 
         return x_res
 
