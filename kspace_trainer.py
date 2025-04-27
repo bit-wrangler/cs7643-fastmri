@@ -19,6 +19,9 @@ from typing import Literal
 import math, random
 import torch.nn.functional as F
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32  = True
+
 def clipped_interp(x, w_min, w_max, x_min, x_max):
     x = np.asarray(x)
     y = w_max + (w_min - w_max) * (x - x_min) / (x_max - x_min)
