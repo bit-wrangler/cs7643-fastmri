@@ -27,16 +27,23 @@ configs = [
         # Model hyperparameters for ReconFormer (adjust values as needed)
         'reconformer_in_channels': 2, # Typically 2 for complex data (real, imag)
         'reconformer_out_channels': 2,
+        #! 'reconformer_num_ch': (96, 48, 24), # Example channel numbers per block
         'reconformer_num_ch': (96, 48, 24), # Example channel numbers per block
+
         'reconformer_down_scales': (2, 1, 1.5), # Example scales for UC/OC blocks
-        'reconformer_num_iter': 5, # Number of recurrent iterations in ReconFormer
+        # 'reconformer_num_ch':         (48, 24, 24),
+        'reconformer_num_iter': 1, # Number of recurrent iterations in ReconFormer
         'reconformer_img_size': 320, # Image size expected by ReconFormer blocks
-        'reconformer_num_heads': (6, 6, 6), # Example head numbers per block
+        # 'reconformer_img_size':       256,
+        # 'reconformer_num_heads': (6, 6, 6), # Example head numbers per block
+        'reconformer_num_heads':      (6, 6, 6),
         'reconformer_depths': (6, 6, 6), # Example depths per block
         'reconformer_window_sizes': (8, 8, 8), # Example window sizes per block
         'reconformer_resi_connection': '1conv', # Type of residual connection
         'reconformer_mlp_ratio': 2.0,
-        'reconformer_use_checkpoint': (False,) * 6, # Checkpointing for blocks
+        #!'reconformer_use_checkpoint': (False,) * 6, # Checkpointing for blocks
+        'reconformer_use_checkpoint': (True,) * 6, # Checkpointing for blocks
+        
 
         # Training hyperparameters (kept mostly the same, adjust if needed)
         'batch_size': 1,
@@ -63,6 +70,58 @@ configs = [
         'checkpoint_dir': 'checkpoints_reconformer', # Changed checkpoint dir
     },
 ]
+
+# configs = [
+#     {
+#         'tags': ['ReconFormer', 'small_model'],
+#         'notes': 'Lightweight ReconFormer for 8 GB GPU',
+#         # Data parameters
+#         'center_fractions': [0.04],
+#         'accelerations': [8],
+#         'seed': 42,
+#         'H': 192,                      # crop height
+#         'W': 192,                      # crop width
+
+#         # ReconFormer hyperparameters
+#         'reconformer_in_channels': 2,
+#         'reconformer_out_channels': 2,
+#         'reconformer_num_ch': (32, 16, 8),        # much smaller channel widths
+#         'reconformer_down_scales': (2, 1, 1.5),
+#         'reconformer_num_iter': 2,                # fewer recurrent iterations
+#         'reconformer_img_size': 192,              # match the crop size
+#         'reconformer_num_heads': (4, 4, 4),       # divides evenly into (32,16,8)
+#         'reconformer_depths': (3, 3, 3),          # fewer transformer layers
+#         'reconformer_window_sizes': (8, 8, 8),
+#         'reconformer_resi_connection': '1conv',
+#         'reconformer_mlp_ratio': 2.0,
+#         'reconformer_use_checkpoint': (True,) * 6,# enable gradient checkpointing
+
+#         # Training hyperparameters
+#         'batch_size': 1,
+#         'num_epochs': 250,
+#         'learning_rate': 1e-4,
+#         'weight_decay': 1e-5,
+#         'mse_weight': 1.0,
+#         'ssim_weight': 1000.0,
+#         'terminate_patience': 10,
+#         'use_l1': False,
+
+#         'scheduler': {
+#             'type': 'ReduceLROnPlateau',
+#             'factor': 0.5,
+#             'patience': 5,
+#         },
+
+#         # Paths (from .env)
+#         'train_path': os.environ.get('SINGLECOIL_TRAIN_PATH'),
+#         'val_path': os.environ.get('SINGLECOIL_VAL_PATH'),
+
+#         # Checkpointing
+#         'save_checkpoint_every': 5,
+#         'checkpoint_dir': 'checkpoints_reconformer',
+#     },
+# ]
+
 
 # Create checkpoint directory if it doesn't exist
 os.makedirs(configs[0]['checkpoint_dir'], exist_ok=True)
@@ -101,48 +160,10 @@ def recon_former_forward(kspace, masked_kspace, mask, image, model):
     img_pred_cl = img_pred.permute(0, 2, 3, 1).contiguous()
     pred_image_abs = fastmri.complex_abs(img_pred_cl)
 
-    # Return only image-domain output (no k-space prediction)
-    return None, pred_image_abs
-    # reconstruct in image domain
-    # image_complex      = fastmri.ifft2c(masked_kspace)
-    # image_pred_complex = model(image_complex, k0=masked_kspace, mask=mask)
-    # # magnitude image for loss
-    # pred_image_abs = fastmri.complex_abs(image_pred_complex)
-    # no direct k-space output, so return None
-    # return image_pred_complex, output
-    
-
-    # Ensure complex channel (C=2) is last for FFT/IFFT
-    # Input shape: (n_slices, 2, H, W)
-    # masked_kspace_permuted = masked_kspace.permute(0, 2, 3, 1).contiguous() # -> (N, H, W, 2)
-
-    # # Calculate initial image (zero-filled recon)
-    # initial_image_permuted = fastmri.ifft2c(masked_kspace_permuted)
-
-    # # Permute back to CxHxW for model input: (N, 2, H, W)
-    # initial_image = initial_image_permuted.permute(0, 3, 1, 2)
-
-    # # Prepare mask for ReconFormer's Data Consistency (DC) layer
-    # # DC layer expects mask corresponding to k0. It permutes mask internally.
-    # # Input mask is (1, 1, W, 1). Expand to match k-space dimensions for DC.
-    # n_slices, C, H, W = masked_kspace.shape
-    # # Expand mask: (1, 1, W, 1) -> (N, C, H, W)
-    # # The mask indicates sampled columns (W dim). Expand H and C dims.
-    # dc_mask_expanded = mask.permute(0, 1, 3, 2) # (1, 1, 1, W)
-    # dc_mask_expanded = dc_mask_expanded.expand(n_slices, C, H, W) # Match k-space shape
-
-    # # Call ReconFormer: expects (image_input, k0, mask)
-    # # k0 is the originally sampled k-space, mask is the sampling mask
-    # image_domain_output = model(initial_image, k0=masked_kspace, mask=dc_mask_expanded)
-
-    # # Convert image domain output back to k-space for the trainer's loss function
-    # image_domain_output_permuted = image_domain_output.permute(0, 2, 3, 1).contiguous() # -> (N, H, W, 2)
-    # kspace_output_permuted = fastmri.fft2c(image_domain_output_permuted)
-
-    # # Permute back to C H W : (N, 2, H, W)
-    # kspace_output = kspace_output_permuted.permute(0, 3, 1, 2)
-
-    # return kspace_output
+    # 2) k‐space prediction for L1 k‐space loss:
+    kspace_pred_cl = fastmri.fft2c(img_pred_cl)                  # (N, H, W, 2)
+    kspace_pred     = kspace_pred_cl.permute(0, 3, 1, 2).contiguous()  # (N, 2, H, W)
+    return kspace_pred, pred_image_abs
 
 
 def train_model():
