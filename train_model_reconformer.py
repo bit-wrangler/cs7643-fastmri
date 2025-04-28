@@ -145,7 +145,7 @@ def train_model():
         
 
         # Create trainer instance, passing the custom forward function
-        trainer = KspaceTrainer(CONFIG, model, forward_func=recon_former_forward)
+        trainer = KspaceTrainer(CONFIG, model, forward_func=recon_former_forward, reconformer=True)
 
         # Start training
         trainer.train()

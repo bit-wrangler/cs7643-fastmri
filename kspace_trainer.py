@@ -18,8 +18,6 @@ import numpy as np
 import math, random
 import torch.nn.functional as F
 
-# downgraded to torch 1.12.0
-from torch.cuda import amp
 
 
 
@@ -48,7 +46,7 @@ def meanstd_normalize(image, mean, std, eps=1e-6):
     return ((image - mean) / (std + eps)).clamp(-6, 6)
 
 class FastMRIDataset(Dataset):
-    def __init__(self, data_path, mask_func=None, target_size=None, augment=False):
+    def __init__(self, data_path, mask_func=None, target_size=None, augment=False, reconformer:bool=False):
         """
         Initialize the FastMRI dataset.
 
@@ -62,6 +60,7 @@ class FastMRIDataset(Dataset):
         self.target_size = target_size  # Target size for W and H dimensions
         self.file_list = glob.glob(os.path.join(data_path, '*.h5'))
         self.augment = augment
+        self.reconformer = reconformer
         print(f"Found {len(self.file_list)} files in {data_path}")
 
     def __len__(self):
@@ -112,7 +111,7 @@ class FastMRIDataset(Dataset):
 
             # adjusting mask
             if self.mask_func is not None:
-                masked_kspace, mask = T.apply_mask(kspace, self.mask_func)
+                masked_kspace, mask, _ = T.apply_mask(kspace, self.mask_func)
             else:
                 masked_kspace, mask = kspace, torch.ones_like(kspace[..., :1])
 
@@ -120,7 +119,10 @@ class FastMRIDataset(Dataset):
             masked_kspace = masked_kspace.permute(0, 3, 1, 2)
 
             # Bring the mask’s singleton channel back in front: (N, H, W, 1) → (N, 1, H, W)
-            mask = mask.permute(0, 3, 1, 2).to(torch.bool)
+            if self.reconformer:
+                mask = mask.permute(0, 3, 1, 2).to(torch.bool)
+            else:
+                mask = mask.to(torch.bool).squeeze()  
 
             return {
                 'kspace': kspace,
@@ -230,7 +232,7 @@ class EarlyStopping:
         return False
 
 class KspaceTrainer:
-    def __init__(self, config, model, forward_func=None):
+    def __init__(self, config, model, forward_func=None, reconformer:bool=False):
         """
         Initialize the KspaceTrainer.
 
@@ -243,6 +245,7 @@ class KspaceTrainer:
         self.config = config
         self.model = model
         self.forward_func = forward_func
+        self.reconformer = reconformer
 
 
         self.plot_idx = None
@@ -252,8 +255,7 @@ class KspaceTrainer:
 
         # Set device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.scaler = amp.GradScaler(enabled=(self.device.type == "cuda"))
-        # self.scaler = torch.amp.GradScaler(enabled=self.device.type == "cuda")
+        self.scaler = torch.amp.GradScaler(enabled=self.device.type == "cuda")
         print(f"Using device: {self.device}")
 
         # Move model to device
@@ -286,13 +288,13 @@ class KspaceTrainer:
         self.val_mask_func = RandomMaskFunc(
             center_fractions=self.config.get('val_center_fractions', [0.04]),
             accelerations=self.config.get('val_accelerations', [8]),
-            # seed=self.config.get('seed', 42)
+            seed=self.config.get('seed', 42)
         )
 
         self.train_mask_func = RandomMaskFunc(
             center_fractions=self.config.get('train_center_fractions', [0.04]),
             accelerations=self.config.get('train_accelerations', [8]),
-            # seed=self.config.get('seed', 42)
+            seed=self.config.get('seed', 42)
         )
 
         # Create checkpoint directory if it doesn't exist
@@ -350,24 +352,21 @@ class KspaceTrainer:
             self.config['train_path'],
             self.train_mask_func,
             target_size=target_size,
-            augment=self.config.get('augment', False)
+            augment=self.config.get('augment', False),
+            reconformer=self.reconformer
         )
 
         val_dataset = FastMRIDataset(
             self.config['val_path'],
             self.val_mask_func,
             target_size=target_size,
-            augment=False
+            augment=False, 
+            reconformer=self.reconformer
         )
-
-        # from torch.utils.data import Subset, DataLoader
-
-        # toy_train  = Subset(train_dataset, list(range(20)))
 
         # Create dataloaders
         train_loader = DataLoader(
             train_dataset,
-            # toy_train,
             batch_size=1,  # Process one file at a time
             shuffle=True,
             num_workers=self.config.get('num_workers', 4)
@@ -481,7 +480,7 @@ class KspaceTrainer:
             self.optimizer.zero_grad()
 
             # Forward pass - returns image domain prediction
-            with amp.autocast(enabled=(self.device.type == "cuda")):
+            with torch.amp.autocast(device_type='cuda', enabled=(self.device.type == "cuda")):
                 k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
@@ -584,7 +583,7 @@ class KspaceTrainer:
                 total_slices += n_slices
 
                 # Forward pass - returns image domain prediction
-                with amp.autocast(enabled=(self.device.type == "cuda")):
+                with torch.amp.autocast(enabled=(self.device.type == "cuda")):
                     k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
