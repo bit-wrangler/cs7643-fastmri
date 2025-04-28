@@ -721,7 +721,7 @@ class KspaceTrainer:
             # Save checkpoint if validation loss improved
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                self._save_checkpoint('best_model.pt', epoch, train_loss, val_loss, val_ssim, val_psnr)
+                self._save_checkpoint('best_model.pt', epoch, train_loss, val_loss, val_ssim, val_psnr, save_to_wandb=True)
                 print(f"Saved best model checkpoint with validation loss: {val_loss:.6f}, SSIM: {val_ssim:.6f}, PSNR: {val_psnr:.6f}")
 
             print('check this', (epoch + 1) % self.config.get('save_checkpoint_every', 5))
@@ -747,7 +747,7 @@ class KspaceTrainer:
         print("Training complete.")
         self.run.finish()
 
-    def _save_checkpoint(self, filename, epoch, train_loss, val_loss, val_ssim, val_psnr):
+    def _save_checkpoint(self, filename, epoch, train_loss, val_loss, val_ssim, val_psnr, save_to_wandb=False):
         """Save a checkpoint."""
         checkpoint_dir = self.config.get('checkpoint_dir', 'checkpoints')
         checkpoint_path = os.path.join(checkpoint_dir, filename)
@@ -764,6 +764,10 @@ class KspaceTrainer:
             'config': self.config
         }
         torch.save(checkpoint, checkpoint_path)
+
+        if save_to_wandb:
+            # Save the checkpoint to wandb
+            self.run.save(checkpoint_path)
 
         # Log best model metrics
         if 'best' in filename:
