@@ -46,7 +46,7 @@ def meanstd_normalize(image, mean, std, eps=1e-6):
     return ((image - mean) / (std + eps)).clamp(-6, 6)
 
 class FastMRIDataset(Dataset):
-    def __init__(self, data_path, mask_func=None, target_size=None, augment=False, reconformer:bool=False):
+    def __init__(self, data_path, mask_func=None, target_size=None, augment=False):
         """
         Initialize the FastMRI dataset.
 
@@ -60,7 +60,6 @@ class FastMRIDataset(Dataset):
         self.target_size = target_size  # Target size for W and H dimensions
         self.file_list = glob.glob(os.path.join(data_path, '*.h5'))
         self.augment = augment
-        self.reconformer = reconformer
         print(f"Found {len(self.file_list)} files in {data_path}")
 
     def __len__(self):
@@ -118,11 +117,7 @@ class FastMRIDataset(Dataset):
             kspace = kspace.permute(0, 3, 1, 2)
             masked_kspace = masked_kspace.permute(0, 3, 1, 2)
 
-            # Bring the mask’s singleton channel back in front: (N, H, W, 1) → (N, 1, H, W)
-            if self.reconformer:
-                mask = mask.permute(0, 3, 1, 2).to(torch.bool)
-            else:
-                mask = mask.to(torch.bool).squeeze()  
+            mask = mask.to(torch.bool).squeeze()  
 
             return {
                 'kspace': kspace,
@@ -232,7 +227,7 @@ class EarlyStopping:
         return False
 
 class KspaceTrainer:
-    def __init__(self, config, model, forward_func=None, reconformer:bool=False):
+    def __init__(self, config, model, forward_func=None):
         """
         Initialize the KspaceTrainer.
 
@@ -245,7 +240,6 @@ class KspaceTrainer:
         self.config = config
         self.model = model
         self.forward_func = forward_func
-        self.reconformer = reconformer
 
 
         self.plot_idx = None
@@ -353,7 +347,6 @@ class KspaceTrainer:
             self.train_mask_func,
             target_size=target_size,
             augment=self.config.get('augment', False),
-            reconformer=self.reconformer
         )
 
         val_dataset = FastMRIDataset(
@@ -361,7 +354,6 @@ class KspaceTrainer:
             self.val_mask_func,
             target_size=target_size,
             augment=False, 
-            reconformer=self.reconformer
         )
 
         # Create dataloaders
@@ -480,7 +472,7 @@ class KspaceTrainer:
             self.optimizer.zero_grad()
 
             # Forward pass - returns image domain prediction
-            with torch.amp.autocast(device_type='cuda', enabled=(self.device.type == "cuda")):
+            with torch.amp.autocast(device_type=self.device.type, enabled=(self.device.type == "cuda")):
                 k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
@@ -583,7 +575,7 @@ class KspaceTrainer:
                 total_slices += n_slices
 
                 # Forward pass - returns image domain prediction
-                with torch.amp.autocast(enabled=(self.device.type == "cuda")):
+                with torch.amp.autocast(device_type=self.device.type, enabled=(self.device.type == "cuda")):
                     k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
@@ -725,7 +717,7 @@ class KspaceTrainer:
             # self.run.log({"learning_rate": current_lr})
             self.run.log({'epoch': epoch + 1})
 
-            print("these are the losses:", val_loss, best_val_loss, val_loss < best_val_loss)
+            # print("these are the losses:", val_loss, best_val_loss, val_loss < best_val_loss)
             # Save checkpoint if validation loss improved
             if val_loss < best_val_loss:
                 best_val_loss = val_loss

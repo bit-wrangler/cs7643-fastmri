@@ -8,6 +8,9 @@ from ReconFormer_main.models.Recurrent_Transformer import ReconFormer # Import t
 
 from kspace_trainer import KspaceTrainer
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32  = True
+
 # Load environment variables
 dotenv.load_dotenv()
 
@@ -46,19 +49,23 @@ configs = [
         
 
         # Training hyperparameters (kept mostly the same, adjust if needed)
-        'batch_size': 1,
+        'batch_size': 1,  # Reduced batch size to avoid CUDA errors
         'num_epochs': 250,
         'learning_rate': 1e-4,
         'weight_decay': 1e-5,
-        'mse_weight': 1.0, # Image domain MSE weight
-        'ssim_weight': 1000.0, # Image domain SSIM weight
-        'terminate_patience': 10,
-        'use_l1': False, # Whether to use L1 for image domain MSE
+        'mse_weight': 1.,
+        'ssim_weight': 1.,
+        'psnr_weight': 0.1,
+        'terminate_patience': 12,
+        'use_l1': True,
+        'l1_transition_mse': 0.02,
+        'max_norm': 10.0,
+        'normalization': 'max',
 
         'scheduler': {
             'type': 'ReduceLROnPlateau',
             'factor': 0.5,
-            'patience': 5,
+            'patience': 6,
         },
 
         # Paths
@@ -66,7 +73,7 @@ configs = [
         'val_path': os.environ.get('SINGLECOIL_VAL_PATH'),
 
         # Checkpointing
-        'save_checkpoint_every': 1,
+        'save_checkpoint_every': 5,
         'checkpoint_dir': 'checkpoints', # Changed checkpoint dir
     },
 ]
@@ -85,12 +92,15 @@ def recon_former_forward(kspace, masked_kspace, mask, image, model):
     Args:
         kspace (torch.Tensor): Ground truth k-space (N, C, H, W) - Used as Target
         masked_kspace (torch.Tensor): Input masked k-space (N, C, H, W) - Used as k0 and for initial image
-        mask (torch.Tensor): Sampling mask (1, 1, W, 1) - Used for DC
+        mask (torch.Tensor): Sampling mask (W)
         model (nn.Module): The ReconFormer model instance.
 
     Returns:
         torch.Tensor: The predicted k-space (N, C, H, W) for the loss function.
     """
+
+    # convert mask from (W) to (1, 1, W)
+    mask = mask.unsqueeze(0).unsqueeze(1).unsqueeze(2)
 
     # image_complex = fastmri.ifft2c(masked_kspace)
     # image_pred_complex = model(image_complex, k0=masked_kspace, mask=mask)
@@ -112,9 +122,9 @@ def recon_former_forward(kspace, masked_kspace, mask, image, model):
     pred_image_abs = fastmri.complex_abs(img_pred_cl)
 
     # 2) k‐space prediction for L1 k‐space loss:
-    kspace_pred_cl = fastmri.fft2c(img_pred_cl)                  # (N, H, W, 2)
-    kspace_pred     = kspace_pred_cl.permute(0, 3, 1, 2).contiguous()  # (N, 2, H, W)
-    return kspace_pred, pred_image_abs
+    # kspace_pred_cl = fastmri.fft2c(img_pred_cl)                  # (N, H, W, 2)
+    # kspace_pred     = kspace_pred_cl.permute(0, 3, 1, 2).contiguous()  # (N, 2, H, W)
+    return None, pred_image_abs
 
 
 def train_model():
@@ -145,7 +155,7 @@ def train_model():
         
 
         # Create trainer instance, passing the custom forward function
-        trainer = KspaceTrainer(CONFIG, model, forward_func=recon_former_forward, reconformer=True)
+        trainer = KspaceTrainer(CONFIG, model, forward_func=recon_former_forward)
 
         # Start training
         trainer.train()

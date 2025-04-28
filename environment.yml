@@ -9,6 +9,8 @@ dependencies:
   - jupyter
   - pyyaml
   - pip
+  - opencv
+  - timm
   - pip:
     - torch==2.6.0
     - torchvision
