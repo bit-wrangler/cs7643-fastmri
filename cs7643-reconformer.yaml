@@ -1,0 +1,34 @@
+name: cs7643-reconformer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python==3.10.17
+  - matplotlib
+  - tqdm
+  - jupyter
+  - pyyaml
+  - pip
+  - timm
+  - tensorboard
+  - cudatoolkit
+  - cudnn
+  - h5py
+  - scipy
+  - pandas
+  - scikit-learn
+  - scikit-image
+  - seaborn
+  - psutil
+  - pydicom
+  - imageio
+  - joblib
+  - nibabel
+  - pip:
+    - torch==2.6.0
+    - torchvision
+    - notebook
+    - numpy
+    - python-dotenv
+    - fastmri
+    - wandb

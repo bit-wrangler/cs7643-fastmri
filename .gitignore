@@ -9,3 +9,4 @@ ReconFormer_main/summary/*
 ReconFormer_main/checkpoints/*
 *Zone.Identifier*
 *.pth
+build/*
