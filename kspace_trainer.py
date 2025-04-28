@@ -15,9 +15,11 @@ from psnr_loss import PSNRLoss
 import wandb
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import Literal
 import math, random
 import torch.nn.functional as F
+
+
+
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32  = True
@@ -44,7 +46,7 @@ def meanstd_normalize(image, mean, std, eps=1e-6):
     return ((image - mean) / (std + eps)).clamp(-6, 6)
 
 class FastMRIDataset(Dataset):
-    def __init__(self, data_path, mask_func=None, target_size=None, augment=False):
+    def __init__(self, data_path, mask_func=None, target_size=None, augment=False, reconformer:bool=False):
         """
         Initialize the FastMRI dataset.
 
@@ -58,6 +60,7 @@ class FastMRIDataset(Dataset):
         self.target_size = target_size  # Target size for W and H dimensions
         self.file_list = glob.glob(os.path.join(data_path, '*.h5'))
         self.augment = augment
+        self.reconformer = reconformer
         print(f"Found {len(self.file_list)} files in {data_path}")
 
     def __len__(self):
@@ -101,6 +104,12 @@ class FastMRIDataset(Dataset):
             # ---------------------------------------------------
 
             # (re)-apply sampling mask **after** augmentation
+            # if self.mask_func is not None:
+            #     masked_kspace, mask, _ = T.apply_mask(kspace, self.mask_func)
+            # else:
+            #     masked_kspace, mask = kspace, torch.ones_like(kspace[..., :1])
+
+            # adjusting mask
             if self.mask_func is not None:
                 masked_kspace, mask, _ = T.apply_mask(kspace, self.mask_func)
             else:
@@ -109,7 +118,11 @@ class FastMRIDataset(Dataset):
             kspace = kspace.permute(0, 3, 1, 2)
             masked_kspace = masked_kspace.permute(0, 3, 1, 2)
 
-            mask = mask.to(torch.bool).squeeze()  
+            # Bring the mask’s singleton channel back in front: (N, H, W, 1) → (N, 1, H, W)
+            if self.reconformer:
+                mask = mask.permute(0, 3, 1, 2).to(torch.bool)
+            else:
+                mask = mask.to(torch.bool).squeeze()  
 
             return {
                 'kspace': kspace,
@@ -219,7 +232,7 @@ class EarlyStopping:
         return False
 
 class KspaceTrainer:
-    def __init__(self, config, model, forward_func=None):
+    def __init__(self, config, model, forward_func=None, reconformer:bool=False):
         """
         Initialize the KspaceTrainer.
 
@@ -232,6 +245,7 @@ class KspaceTrainer:
         self.config = config
         self.model = model
         self.forward_func = forward_func
+        self.reconformer = reconformer
 
 
         self.plot_idx = None
@@ -338,14 +352,16 @@ class KspaceTrainer:
             self.config['train_path'],
             self.train_mask_func,
             target_size=target_size,
-            augment=self.config.get('augment', False)
+            augment=self.config.get('augment', False),
+            reconformer=self.reconformer
         )
 
         val_dataset = FastMRIDataset(
             self.config['val_path'],
             self.val_mask_func,
             target_size=target_size,
-            augment=False
+            augment=False, 
+            reconformer=self.reconformer
         )
 
         # Create dataloaders
@@ -365,7 +381,7 @@ class KspaceTrainer:
 
         return train_loader, val_loader
 
-    def _process_batch(self, batch, norm:Literal['max','meanstd']):
+    def _process_batch(self, batch, norm):
         """Process a batch and return kspace, masked_kspace, and mask tensors."""
         # {
         #     'kspace': kspace,
@@ -434,7 +450,7 @@ class KspaceTrainer:
 
         return k_space_pred, pred_image_abs
 
-    def train_epoch(self, dataloader, epoch, prev_ave_mse, norm:Literal['max','meanstd']='max'):
+    def train_epoch(self, dataloader, epoch, prev_ave_mse, norm='max'):
         """Train for one epoch."""
         self.model.train()
         running_loss = 0.0
@@ -464,7 +480,7 @@ class KspaceTrainer:
             self.optimizer.zero_grad()
 
             # Forward pass - returns image domain prediction
-            with torch.amp.autocast(self.device.type):
+            with torch.amp.autocast(device_type='cuda', enabled=(self.device.type == "cuda")):
                 k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
@@ -544,7 +560,7 @@ class KspaceTrainer:
 
         return avg_loss, avg_mse_loss, avg_ssim_loss
 
-    def validate(self, dataloader, prev_ave_mse, norm:Literal['max','meanstd']='max', plot=False):
+    def validate(self, dataloader, prev_ave_mse, norm='max', plot=False):
         """Validate the model."""
         self.model.eval()
         running_loss = 0.0
@@ -567,7 +583,7 @@ class KspaceTrainer:
                 total_slices += n_slices
 
                 # Forward pass - returns image domain prediction
-                with torch.amp.autocast(self.device.type):
+                with torch.amp.autocast(enabled=(self.device.type == "cuda")):
                     k_space_pred, pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
                 # if normalization['type'] == 'max':
                 #     pred_image_abs = max_normalize(pred_image_abs, normalization['zf_max'])
@@ -709,12 +725,15 @@ class KspaceTrainer:
             # self.run.log({"learning_rate": current_lr})
             self.run.log({'epoch': epoch + 1})
 
+            print("these are the losses:", val_loss, best_val_loss, val_loss < best_val_loss)
             # Save checkpoint if validation loss improved
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 self._save_checkpoint('best_model.pt', epoch, train_loss, val_loss, val_ssim, val_psnr)
                 print(f"Saved best model checkpoint with validation loss: {val_loss:.6f}, SSIM: {val_ssim:.6f}, PSNR: {val_psnr:.6f}")
 
+            print('check this', (epoch + 1) % self.config.get('save_checkpoint_every', 5))
+            
             # Save checkpoint every N epochs
             if (epoch + 1) % self.config.get('save_checkpoint_every', 5) == 0:
                 self._save_checkpoint(f'model_epoch_{epoch+1}.pt', epoch, train_loss, val_loss, val_ssim, val_psnr)
