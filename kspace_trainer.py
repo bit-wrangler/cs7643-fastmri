@@ -374,6 +374,9 @@ class KspaceTrainer:
             # Convert target kspace to image domain
             target_image_abs = target
 
+            if target_image_abs.ndim == 3:
+                target_image_abs = target_image_abs.unsqueeze(1)
+
             print('Image shape in train_epoch - pred %s', pred_image_abs.shape)
             print('Image shape in train_epoch - target %s', target_image_abs.shape)
 
