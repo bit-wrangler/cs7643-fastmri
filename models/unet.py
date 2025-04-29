@@ -76,7 +76,7 @@ class Unet(nn.Module):
         """
         stack = []
         output = image
-        print('Image shape in unet forward %s', image.shape)
+        # print('Image shape in unet forward %s', image.shape)
 
         # apply down-sampling layers
         for layer in self.down_sample_layers:

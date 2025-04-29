@@ -99,9 +99,9 @@ def train_model():
             # Get kspace prediction from model
             # kspace_pred = model(kspace, mask)
             image = image.unsqueeze(1)
-            print('Image shape in train_model forward_func %s', image.shape)
+            # print('Image shape in train_model forward_func %s', image.shape)
             kspace_pred = model(image)
-            print('Image shape in train_model forward_func kspace_pred %s', kspace_pred.shape)
+            # print('Image shape in train_model forward_func kspace_pred %s', kspace_pred.shape)
 
             # Convert to image domain
             # kspace_pred_permuted = kspace_pred.permute(0, 2, 3, 1)

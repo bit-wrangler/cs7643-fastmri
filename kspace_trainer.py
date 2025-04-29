@@ -368,9 +368,9 @@ class KspaceTrainer:
             self.optimizer.zero_grad()
 
             # Forward pass - returns image domain prediction
-            print('Image shape in train_epoch - pred 1 %s', image.shape)
+            # print('Image shape in train_epoch - pred 1 %s', image.shape)
             pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
-            print('Image shape in train_epoch - pred 2 %s', pred_image_abs.shape)
+            # print('Image shape in train_epoch - pred 2 %s', pred_image_abs.shape)
             # pred_image_abs = max_normalize(pred_image_abs, zf_max)
             # print('Image shape in train_epoch - pred 3 %s', pred_image_abs.shape)
 
@@ -380,8 +380,8 @@ class KspaceTrainer:
             if target_image_abs.ndim == 3:
                 target_image_abs = target_image_abs.unsqueeze(1)
 
-            print('Image shape in train_epoch - pred %s', pred_image_abs.shape)
-            print('Image shape in train_epoch - target %s', target_image_abs.shape)
+            # print('Image shape in train_epoch - pred %s', pred_image_abs.shape)
+            # print('Image shape in train_epoch - target %s', target_image_abs.shape)
 
             use_l1 = self.config.get('use_l1', False)
 
