@@ -371,8 +371,8 @@ class KspaceTrainer:
             print('Image shape in train_epoch - pred 1 %s', image.shape)
             pred_image_abs = self._forward_pass(kspace, masked_kspace, mask, image)
             print('Image shape in train_epoch - pred 2 %s', pred_image_abs.shape)
-            pred_image_abs = max_normalize(pred_image_abs, zf_max)
-            print('Image shape in train_epoch - pred 3 %s', pred_image_abs.shape)
+            # pred_image_abs = max_normalize(pred_image_abs, zf_max)
+            # print('Image shape in train_epoch - pred 3 %s', pred_image_abs.shape)
 
             # Convert target kspace to image domain
             target_image_abs = target
