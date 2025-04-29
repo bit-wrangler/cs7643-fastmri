@@ -88,8 +88,10 @@ def image_losses(pred_image_abs, target_image_abs, zf_max, use_l1=False):
     # For SSIM loss, we need to keep the dimensions
     # SSIM module expects inputs of shape [batch, channel, height, width]
     # Add channel dimension since we have a single channel (magnitude image)
-    pred_image_abs_ssim = pred_image_abs.unsqueeze(1)
-    target_image_abs_ssim = target_image_abs.unsqueeze(1)
+    # pred_image_abs_ssim = pred_image_abs.unsqueeze(1)
+    # target_image_abs_ssim = target_image_abs.unsqueeze(1)
+    pred_image_abs_ssim = pred_image_abs
+    target_image_abs_ssim = target_image_abs
     ssim_loss_val = ssim_loss(target_image_abs_ssim, pred_image_abs_ssim, torch.ones_like(zf_max, device=zf_max.device))
 
     return mse_loss, ssim_loss_val
@@ -371,6 +373,9 @@ class KspaceTrainer:
 
             # Convert target kspace to image domain
             target_image_abs = target
+
+            print('Image shape in train_epoch - pred %s', pred_image_abs.shape)
+            print('Image shape in train_epoch - target %s', target_image_abs.shape)
 
             use_l1 = self.config.get('use_l1', False)
 
