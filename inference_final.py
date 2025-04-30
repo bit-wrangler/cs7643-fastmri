@@ -141,7 +141,6 @@ reconformer_config = {
 
 # %%
 models = [
-    ('gt', None, None, 'Ground Truth'),
     ('zf', None, None, 'Zero Filled'),
     ('file:./checkpoints/best_model_mae.pt',
         lambda: SingleCoilKspaceColumnwiseMaskedTransformerDenoiser(**{
@@ -221,7 +220,8 @@ models = [
         ),
         recon_former_forward,
         'ReconFormer'
-    )
+    ),
+    ('gt', None, None, 'Ground Truth'),
 ]
 
 # %%
@@ -342,9 +342,10 @@ outputs = [run_model(
 ) for checkpoint, model, forward_func, label in models]
 # %%
 
-fig, axs = plt.subplots(len(models), 1, figsize=(4, 3*len(models)))
+fig, axs = plt.subplots(len(models)//2, 2, figsize=(4, 2.3*len(models)//2))
 
-for i, ax in enumerate(axs):
+for i in range(len(models)):
+    ax = axs[i//2, i%2]
     (checkpoint, model, forward_func, label) = models[i]
     output = outputs[i]
     idx = output.shape[0] // 2
