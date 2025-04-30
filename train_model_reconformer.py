@@ -147,6 +147,10 @@ def train_model():
             use_checkpoint=CONFIG['reconformer_use_checkpoint']
         ).to(device='cuda' if torch.cuda.is_available() else 'cpu')
 
+        total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f'{total_params:,} parameters')          # human‑readable with commas
+        print(f'{total_params/1e6:.2f} M parameters')  # in millions
+
 
         # Check and print the device being used for the model
         device = next(model.parameters()).device

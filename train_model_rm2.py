@@ -38,7 +38,7 @@ configs = [
         'encoder_kernel_size': 9,
         'encoder_patch_size': 8,
         'kspace_embedding_dim': 512,
-        'transformer_hidden_size': 128,
+        'transformer_hidden_size': 256,
         'transformer_num_heads': 16,
         'transformer_num_layers': 1,
         'apply_final_dc': True,

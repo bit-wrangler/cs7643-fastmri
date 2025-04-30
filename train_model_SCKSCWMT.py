@@ -5,6 +5,10 @@ import fastmri
 from models.singlecoil_kspace_columnwise_masked_transformer_denoiser import SingleCoilKspaceColumnwiseMaskedTransformerDenoiser
 from kspace_trainer import KspaceTrainer
 
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32  = True
+
 # Load environment variables
 dotenv.load_dotenv()
 
@@ -21,6 +25,7 @@ configs = [
     'seed': 42,
     'H': 320,
     'W': 320,
+    'augment': False,
 
     # Model hyperparameters
     'model': {

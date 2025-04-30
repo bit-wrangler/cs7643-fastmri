@@ -10,3 +10,4 @@ ReconFormer_main/checkpoints/*
 *Zone.Identifier*
 *.pth
 build/*
+images/
